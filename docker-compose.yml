@@ -1,0 +1,50 @@
+version: '3.8'
+
+
+networks:
+  fastapi-network:
+    driver: bridge
+
+services:
+  db:
+    image: postgres:alpine
+    container_name: fintrack-db
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=fintrack
+    networks:
+      - fastapi-network
+
+  # fastapi:
+  #   build: .
+  #   container_name: pc-api
+  #   hostname: pc-api
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - DATABASE_URL=postgresql://postgres:postgres@db:5432/fintrack
+  #   depends_on:
+  #     - db
+  #   volumes:
+  #     - .:/code
+  #   networks:
+  #     - fastapi-network
+
+  # nginx:
+  #   image: nginx:stable-alpine
+  #   container_name: pc-nginx
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf
+  #   depends_on:
+  #     - fastapi
+  #     - frontend
+  #   networks:
+  #     - fastapi-network
+  
