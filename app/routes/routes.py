@@ -1,3 +1,4 @@
+from app.models.scheme import TokenRequest
 from fastapi import APIRouter, Request, Depends
 from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
 from app.controller.controller import fetch_gmail_messages
@@ -17,11 +18,6 @@ def oauth2callback(request: Request, code: str):
     return {"message": "OAuth Success. Now call /emails", "tokens": tokens}
 
 # Step 3: Use access_token to call Gmail API
-
-from pydantic import BaseModel
-
-class TokenRequest(BaseModel):
-    access_token: str
 
 @router.post("/emails")
 def get_emails(payload: TokenRequest):
