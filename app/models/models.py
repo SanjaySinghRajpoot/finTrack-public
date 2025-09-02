@@ -8,6 +8,25 @@ import json
 class Base(DeclarativeBase):
     pass 
 
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Google profile details
+    email = Column(String, unique=True, nullable=False, index=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    profile_image = Column(String, nullable=True)  # URL to Google profile picture
+    
+    password = Column(String, nullable=True)  # store hashed password, not plain text
+    locale = Column(String, nullable=True)      # e.g. "en", "hi"
+    country = Column(String, nullable=True) 
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
 class Email(Base):
     __tablename__ = "emails"
 
@@ -37,14 +56,12 @@ class Email(Base):
     labels = Column(JSON, nullable=True)             # Gmail labels, store as JSON
 
     # additional metadata
-    metadata = Column(JSON, nullable=True)           # raw Gmail payload metadata
+    meta_data = Column(JSON, nullable=True)           # raw Gmail payload metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     attachments = relationship("Attachment", back_populates="email")
-        
-
 
 
 class Attachment(Base):
