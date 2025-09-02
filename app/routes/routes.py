@@ -1,7 +1,7 @@
 from app.models.scheme import TokenRequest
 from fastapi import APIRouter, Request, Depends
 from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
-from app.controller.controller import fetch_gmail_messages
+from app.controller.controller import GmailClient
 
 router = APIRouter()
 
@@ -24,5 +24,8 @@ def get_emails(payload: TokenRequest):
     access_token = payload.access_token
     if not access_token:
         return {"error": "Not authenticated. Please login first."}
+    
+    gmail_client = GmailClient(access_token)
 
-    return fetch_gmail_messages(access_token)
+
+    return gmail_client.fetch_emails()
