@@ -2,6 +2,8 @@ import base64
 from pathlib import Path
 import requests
 
+from app.models.models import Email
+
 # def fetch_gmail_messages(access_token: str):
 #     headers = {"Authorization": f"Bearer {access_token}"}
     
@@ -52,11 +54,12 @@ import requests
 class GmailClient:
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-    def __init__(self, access_token: str, download_dir: str = "attachments"):
+    def __init__(self, access_token: str, db: requests.Session, download_dir: str = "attachments"):
         self.access_token = access_token
         self.headers = {"Authorization": f"Bearer {self.access_token}"}
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        self.db = db
 
     def _get(self, endpoint: str, params: dict = None):
         """Helper for GET requests with auth header."""
@@ -129,6 +132,17 @@ class GmailClient:
             subject, sender = self._extract_headers(headers_list)
             body = self._decode_body(msg_data["payload"])
             attachments = self._download_attachments(msg_id, msg_data["payload"])
+
+            email_obj = Email(
+                from_address=sender,
+                subject=subject,
+                type="email",
+                gmail_message_id=msg_id,
+                user_id=2
+            )
+
+            self.db.add(email_obj)
+            self.db.commit()
 
             emails.append({
                 "id": msg_id,
