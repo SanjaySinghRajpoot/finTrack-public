@@ -26,8 +26,23 @@ class EmailAttachmentProcessor:
         resp.raise_for_status()
         return resp.json()
     
-    def _save(self):
-        pass
+    def _save(self, attachment_id, attachment_info, email_fk_id, filename):
+        attachment_obj = self.db.get_attachment_by_id(attachment_id)
+
+        if not attachment_obj:
+            attachment_obj = Attachment(
+                email_id=email_fk_id,
+                attachment_id=attachment_id,
+                filename=filename,
+                mime_type=attachment_info.get('mime_type'),
+                size=attachment_info.get("file_size"),
+                storage_path=attachment_info.get("file_path"),
+                extracted_text=attachment_info.get("text_content"),
+            )
+            self.db.save_attachment(attachment_obj)
+        else:
+            print("attachment already exists, skipping ")
+    
     
     def download_attachments(self, msg_id: str, email_fk_id: int, payload: Dict) -> List[Dict]:
         """Download and process email attachments."""
@@ -48,22 +63,9 @@ class EmailAttachmentProcessor:
                     attachment_data, attachment_id, filename
                 )
 
-                attachment_obj = self.db.get_attachment_by_id(attachment_id)
+                self._save(attachment_id, attachment_info, email_fk_id, filename)
 
-                if not attachment_obj:
-                    attachment_obj = Attachment(
-                        email_id=email_fk_id,
-                        attachment_id=attachment_id,
-                        filename=filename,
-                        mime_type=attachment_info.get('mime_type'),
-                        size=attachment_info.get("file_size"),
-                        storage_path=attachment_info.get("file_path"),
-                        extracted_text=attachment_info.get("text_content"),
-                    )
-                    self.db.save_attachment(attachment_obj)
-                else:
-                    print("attachment already exists ")
-                
                 attachments.append(attachment_info)
+                
         
         return attachments
