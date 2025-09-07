@@ -3,12 +3,13 @@ from pathlib import Path
 import requests
 
 from app.models.models import Email
-from app.services.file_service import EmailAttachmentProcessor
+from app.services.db_service import DBService
+from app.services.email_service import EmailAttachmentProcessor
 
 class GmailClient:
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-    def __init__(self, access_token: str, db: requests.Session, download_dir: str = "attachments"):
+    def __init__(self, access_token: str, db: DBService, download_dir: str = "attachments"):
         self.access_token = access_token
         self.headers = {"Authorization": f"Bearer {self.access_token}"}
         self.download_dir = Path(download_dir)
@@ -86,13 +87,11 @@ class GmailClient:
             subject, sender = self._extract_headers(headers_list)
             body = self._decode_body(msg_data["payload"])
 
-            attchement = EmailAttachmentProcessor(self.access_token)
 
-            attachments = attchement.download_attachments(msg_id, msg_data["payload"])
+            # Saving the data in the Database - make this a sepearate class
+            email_obj = self.db.get_email_by_id(msg_id)
 
-            existing_email = self.db.query(Email).filter_by(gmail_message_id=msg_id).first()
-
-            if not existing_email:
+            if not email_obj:
                 email_obj = Email(
                     from_address=sender,
                     subject=subject,
@@ -103,6 +102,13 @@ class GmailClient:
                 self.db.add(email_obj)
             else:
                 print(f"Email with gmail_message_id={msg_id} already exists, skipping insert.")
+
+            
+            # Process Email Attachements
+            email_attachements = EmailAttachmentProcessor(self.access_token, self.db)
+
+            attachments = email_attachements.download_attachments(msg_id, email_obj.id, msg_data["payload"])
+
 
             emails.append({
                 "id": msg_id,

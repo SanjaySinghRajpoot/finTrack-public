@@ -11,6 +11,8 @@ import PyPDF2
 
 import requests
 
+from app.models.models import Attachment
+
 # Required imports for different file types
 try:
     from PyPDF2 import PdfReader
@@ -90,7 +92,6 @@ class FileProcessor:
         missing = [lib for lib, available in dependencies.items() if not available]
         if missing:
             print(f"Warning: Missing libraries for {', '.join(missing)} processing")
-            print("Install with: pip install PyPDF2 python-docx openpyxl xlrd python-pptx")
         
         return dependencies
     
@@ -351,7 +352,8 @@ class FileProcessor:
                 'attachment_id': attachment_id,
                 'filename': filename,
                 'file_path': str(saved_file_path),
-                'file_type': file_type,
+                'file_type': file_type(),
+                'mime_type': self.get_file_type(saved_file_path),
                 'text_content': text_content,
                 'file_size': len(file_data),
                 'is_supported': self.is_supported(saved_file_path),
@@ -433,44 +435,3 @@ class FileProcessor:
         return results
 
 
-# Example usage integration with your original function
-class EmailAttachmentProcessor:
-    """Example integration with email attachment processing."""
-    BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
-    
-    def __init__(self, access_token, download_dir: Optional[Union[str, Path]] = None):
-        # Use /data as default directory
-        self.file_processor = FileProcessor(download_dir or "/metadata")
-        self.download_dir = self.file_processor.download_dir
-        self.headers = {"Authorization": f"Bearer {access_token}"}
-    
-    def _get(self, endpoint: str, params: dict = None) -> Dict:
-        """Placeholder for your API get method."""
-        # Replace with your actual API call implementation
-        url = f"{self.BASE_URL}/{endpoint}"
-        resp = requests.get(url, headers=self.headers, params=params)
-        resp.raise_for_status()
-        return resp.json()
-    
-    def download_attachments(self, msg_id: str, payload: Dict) -> List[Dict]:
-        """Download and process email attachments."""
-        attachments = []
-        
-        if "parts" not in payload:
-            return attachments
-
-        for part in payload["parts"]:
-            body = part.get("body", {})
-            if "attachmentId" in body:  # it's an attachment
-                attachment_id = body["attachmentId"]
-                attachment_data = self._get(f"messages/{msg_id}/attachments/{attachment_id}")
-                filename = part.get("filename")
-                
-                # Process attachment using FileProcessor
-                attachment_info = self.file_processor.process_gmail_attachment(
-                    attachment_data, attachment_id, filename
-                )
-                
-                attachments.append(attachment_info)
-        
-        return attachments

@@ -2,6 +2,7 @@ from requests import Session
 from app.db_config import SessionLocal
 from app.models.scheme import TokenRequest
 from fastapi import APIRouter, Request, Depends
+from app.services.db_service import DBService
 from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
 from app.controller.controller import GmailClient
 
@@ -37,7 +38,9 @@ def get_emails(
     if not access_token:
         return {"error": "Not authenticated. Please login first."}
     
-    gmail_client = GmailClient(access_token, db)
-
+    # DB service will be used in the entire api lifecycle
+    db_service = DBService(db)
+    
+    gmail_client = GmailClient(access_token, db_service)
 
     return gmail_client.fetch_emails()

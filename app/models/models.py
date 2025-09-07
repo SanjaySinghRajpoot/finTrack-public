@@ -69,6 +69,7 @@ class Attachment(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email_id = Column(Integer, ForeignKey("emails.id"), nullable=False)
+    attachment_id = Column(String(1000), unique=True, nullable=False)
 
     filename = Column(String(512), nullable=False)
     mime_type = Column(String(255), nullable=True)
