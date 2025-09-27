@@ -109,7 +109,6 @@ class GmailClient:
 
             attachments = email_attachements.download_attachments(msg_id, email_obj.id, msg_data["payload"])
 
-
             emails.append({
                 "id": msg_id,
                 "from": sender,

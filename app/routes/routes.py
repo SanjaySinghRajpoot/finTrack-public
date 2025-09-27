@@ -43,4 +43,9 @@ def get_emails(
     
     gmail_client = GmailClient(access_token, db_service)
 
+    # Now once we have fetched all the mails now I need to process with the help of LLMs
+    # no need for this we will use free open source OCR models
+
     return gmail_client.fetch_emails()
+
+

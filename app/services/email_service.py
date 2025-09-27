@@ -5,6 +5,7 @@ import requests
 from app.models.models import Attachment
 from app.services.db_service import DBService
 from app.services.file_service import FileProcessor
+from app.services.llm_service import LLMService
 
 
 class EmailAttachmentProcessor:
@@ -16,6 +17,7 @@ class EmailAttachmentProcessor:
         self.file_processor = FileProcessor(download_dir or "/metadata")
         self.download_dir = self.file_processor.download_dir
         self.headers = {"Authorization": f"Bearer {access_token}"}
+        self.llm_service = LLMService()
         self.db = db
     
     def _get(self, endpoint: str, params: dict = None) -> Dict:
@@ -62,6 +64,11 @@ class EmailAttachmentProcessor:
                 attachment_info = self.file_processor.process_gmail_attachment(
                     attachment_data, attachment_id, filename
                 )
+
+                # Now the pdf has been processed now I need to convert the text from the attachement into a proper json response that I can save in the
+                # the database, which can be displayed on the frontend this will be displayed on the user dashboard
+
+                response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
 
                 self._save(attachment_id, attachment_info, email_fk_id, filename)
 
