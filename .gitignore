@@ -6,3 +6,5 @@ data
 .DS_Store
 credentials.json
 metadata
+venv
+lib
