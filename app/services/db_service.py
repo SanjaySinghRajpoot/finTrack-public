@@ -1,5 +1,5 @@
 from requests import Session
-from app.models.models import Attachment, Email
+from app.models.models import Attachment, Email, ProcessedEmailData
 
 
 class DBService:
@@ -7,16 +7,23 @@ class DBService:
         self.db = db
 
     def add(self, obj):
-        self.db.add(obj)
-        self.db.commit()
-        self.db.refresh(obj)
-        return obj
+        try:
+            self.db.add(obj)
+            self.db.commit()
+            self.db.refresh(obj)
+            return obj
+        except Exception as e:
+            raise e
+
 
     def get_attachment_by_id(self, attachment_id: str):
         return self.db.query(Attachment).filter_by(attachment_id=attachment_id).first()
 
     def save_attachment(self, attachment: Attachment):
         self.add(attachment)
+
+    def save_proccessed_email_data(self, processed_email_data: ProcessedEmailData):
+        self.add(processed_email_data)
 
     def get_email_by_id(self, msg_id):
         return self.db.query(Email).filter_by(gmail_message_id=msg_id).first()

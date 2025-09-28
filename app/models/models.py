@@ -196,7 +196,7 @@ class ProcessedEmailData(Base):
     # link back to the source email
     email_id = Column(Integer, ForeignKey("emails.id"), nullable=False)
 
-    document_type = Column(Enum(DocumentType), nullable=False)
+    document_type = Column(String, nullable=False)
     
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)

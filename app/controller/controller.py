@@ -103,11 +103,12 @@ class GmailClient:
             else:
                 print(f"Email with gmail_message_id={msg_id} already exists, skipping insert.")
 
-            
             # Process Email Attachements
             email_attachements = EmailAttachmentProcessor(self.access_token, self.db)
 
             attachments = email_attachements.download_attachments(msg_id, email_obj.id, msg_data["payload"])
+
+            # I need to call the gemini api here for data processsing
 
             emails.append({
                 "id": msg_id,

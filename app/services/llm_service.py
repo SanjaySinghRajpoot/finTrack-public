@@ -48,6 +48,7 @@ schema = {
     "vendor_gstin": {"type": "string", "description": "Vendor's GST identification number"},
     "category": {"type": "string", "description": "Category of expense or document type"},
     "tags": {"type": "array", "items": {"type": "string"}, "description": "List of tags for categorization"},
+    "metadata": {"type": "array","description": "List of all relevant document metadata to assist in later processing."},
 }
 
 # Required fields

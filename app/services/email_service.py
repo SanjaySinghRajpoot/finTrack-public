@@ -6,6 +6,7 @@ from app.models.models import Attachment
 from app.services.db_service import DBService
 from app.services.file_service import FileProcessor
 from app.services.llm_service import LLMService
+from app.utils.utils import create_processed_email_data
 
 
 class EmailAttachmentProcessor:
@@ -47,32 +48,42 @@ class EmailAttachmentProcessor:
     
     
     def download_attachments(self, msg_id: str, email_fk_id: int, payload: Dict) -> List[Dict]:
-        """Download and process email attachments."""
-        attachments = []
-        
-        if "parts" not in payload:
+        try:
+            """Download and process email attachments."""
+            attachments = []
+
+            if "parts" not in payload:
+                return attachments
+
+            for part in payload["parts"]:
+                body = part.get("body", {})
+                if "attachmentId" in body:  # it's an attachment
+                    attachment_id = body["attachmentId"]
+                    attachment_data = self._get(f"messages/{msg_id}/attachments/{attachment_id}")
+                    filename = part.get("filename")
+
+                    # Process attachment using FileProcessor
+                    attachment_info = self.file_processor.process_gmail_attachment(
+                        attachment_data, attachment_id, filename
+                    )
+
+                    # Now the pdf has been processed now I need to convert the text from the attachement into a proper json response that I can save in the
+                    # the database, which can be displayed on the frontend this will be displayed on the user dashboard
+
+                    response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
+
+                    print(response.get("price"))
+                    print(response)
+
+                     # I need to save all this data in the database table from where the information will be displayed to the user
+                    processed_data_obj = create_processed_email_data(user_id=2, email_id=email_fk_id, data=response)
+                    self.db.save_proccessed_email_data(processed_email_data=processed_data_obj)
+
+                    self._save(attachment_id, attachment_info, email_fk_id, filename)
+
+                    attachments.append(attachment_info)
             return attachments
+        except Exception as e:
+            print(e)
+            return [{}]
 
-        for part in payload["parts"]:
-            body = part.get("body", {})
-            if "attachmentId" in body:  # it's an attachment
-                attachment_id = body["attachmentId"]
-                attachment_data = self._get(f"messages/{msg_id}/attachments/{attachment_id}")
-                filename = part.get("filename")
-                
-                # Process attachment using FileProcessor
-                attachment_info = self.file_processor.process_gmail_attachment(
-                    attachment_data, attachment_id, filename
-                )
-
-                # Now the pdf has been processed now I need to convert the text from the attachement into a proper json response that I can save in the
-                # the database, which can be displayed on the frontend this will be displayed on the user dashboard
-
-                response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
-
-                self._save(attachment_id, attachment_info, email_fk_id, filename)
-
-                attachments.append(attachment_info)
-                
-        
-        return attachments

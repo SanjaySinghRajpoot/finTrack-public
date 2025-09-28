@@ -34,18 +34,21 @@ def get_emails(
     payload: TokenRequest,
     db: Session = Depends(get_db)
 ):
-    access_token = payload.access_token
-    if not access_token:
-        return {"error": "Not authenticated. Please login first."}
-    
-    # DB service will be used in the entire api lifecycle
-    db_service = DBService(db)
-    
-    gmail_client = GmailClient(access_token, db_service)
+    try:
+        access_token = payload.access_token
+        if not access_token:
+            return {"error": "Not authenticated. Please login first."}
 
-    # Now once we have fetched all the mails now I need to process with the help of LLMs
-    # no need for this we will use free open source OCR models
+        # DB service will be used in the entire api lifecycle
+        db_service = DBService(db)
 
-    return gmail_client.fetch_emails()
+        gmail_client = GmailClient(access_token, db_service)
+
+        # Now once we have fetched all the mails now I need to process with the help of LLMs
+        # no need for this we will use free open source OCR models
+
+        return gmail_client.fetch_emails()
+    except Exception as e:
+        return e
 
 
