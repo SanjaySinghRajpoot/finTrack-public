@@ -1,11 +1,11 @@
 from requests import Session
 from app.db_config import SessionLocal
+from app.middleware.auth_middleware import jwt_middleware
 from app.models.scheme import TokenRequest
 from fastapi import APIRouter, Request, Depends
 from app.services.db_service import DBService
 from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
 from app.controller.controller import GmailClient
-
 router = APIRouter()
 
 def get_db():
@@ -15,40 +15,44 @@ def get_db():
     finally:
         db.close()
 
-# Step 1: Redirect user to Google OAuth
 @router.get("/login")
 def login():
     url = generate_auth_url()
     return {"auth_url": url}
 
-# Step 2: Handle OAuth callback
 @router.get("/emails/oauth2callback")
-def oauth2callback(request: Request, code: str):
-    tokens = exchange_code_for_tokens(code)
-    return {"message": "OAuth Success. Now call /emails", "tokens": tokens}
-
-# Step 3: Use access_token to call Gmail API
+def oauth2callback(request: Request, code: str, db: Session = Depends(get_db)):
+    tokens = exchange_code_for_tokens(code, db)
+    return tokens
 
 @router.post("/emails")
 def get_emails(
     payload: TokenRequest,
+    user=Depends(jwt_middleware),
     db: Session = Depends(get_db)
 ):
     try:
+        user_id = user.get("user_id")
+
         access_token = payload.access_token
         if not access_token:
             return {"error": "Not authenticated. Please login first."}
 
-        # DB service will be used in the entire api lifecycle
         db_service = DBService(db)
 
-        gmail_client = GmailClient(access_token, db_service)
-
-        # Now once we have fetched all the mails now I need to process with the help of LLMs
-        # no need for this we will use free open source OCR models
+        gmail_client = GmailClient(access_token, db_service, user_id)
 
         return gmail_client.fetch_emails()
     except Exception as e:
         return e
 
+@router.get("/payment/info")
+def get_payment_info(user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    try:
+        user_id = user.get("user_id")
 
+        db_service = DBService(db)
+
+        return db_service.get_processed_data(user_id=user_id)
+    except Exception as e:
+        return e
