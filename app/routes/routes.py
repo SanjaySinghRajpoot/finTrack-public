@@ -28,26 +28,31 @@ def oauth2callback(request: Request, code: str, db: Session = Depends(get_db)):
 @router.post("/emails")
 def get_emails(
     payload: TokenRequest,
+    user=Depends(jwt_middleware),
     db: Session = Depends(get_db)
 ):
     try:
+        user_id = user.get("user_id")
+
         access_token = payload.access_token
         if not access_token:
             return {"error": "Not authenticated. Please login first."}
 
         db_service = DBService(db)
 
-        gmail_client = GmailClient(access_token, db_service)
+        gmail_client = GmailClient(access_token, db_service, user_id)
 
         return gmail_client.fetch_emails()
     except Exception as e:
         return e
 
 @router.get("/payment/info")
-def get_payment_info(user=Depends(jwt_middleware)):
+def get_payment_info(user=Depends(jwt_middleware), db: Session = Depends(get_db)):
     try:
         user_id = user.get("user_id")
 
-        print(user_id)
+        db_service = DBService(db)
+
+        return db_service.get_processed_data(user_id=user_id)
     except Exception as e:
         return e

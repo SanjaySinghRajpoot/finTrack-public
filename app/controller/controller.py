@@ -9,12 +9,13 @@ from app.services.email_service import EmailAttachmentProcessor
 class GmailClient:
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-    def __init__(self, access_token: str, db: DBService, download_dir: str = "attachments"):
+    def __init__(self, access_token: str, db: DBService, user_id: int, download_dir: str = "attachments"):
         self.access_token = access_token
         self.headers = {"Authorization": f"Bearer {self.access_token}"}
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
         self.db = db
+        self.user_id = user_id
 
     def _get(self, endpoint: str, params: dict = None):
         """Helper for GET requests with auth header."""
@@ -96,16 +97,15 @@ class GmailClient:
                     subject=subject,
                     type="email",
                     gmail_message_id=msg_id,
-                    user_id=2
+                    user_id=self.user_id
                 )
                 self.db.add(email_obj)
             else:
                 print(f"Email with gmail_message_id={msg_id} already exists, skipping insert.")
 
-            # Process Email Attachements
-            email_attachements = EmailAttachmentProcessor(self.access_token, self.db)
+            email_attachments = EmailAttachmentProcessor(self.access_token, self.db, self.user_id)
 
-            attachments = email_attachements.download_attachments(msg_id, email_obj.id, msg_data["payload"])
+            attachments = email_attachments.download_attachments(msg_id, email_obj.id, msg_data["payload"])
 
             emails.append({
                 "id": msg_id,

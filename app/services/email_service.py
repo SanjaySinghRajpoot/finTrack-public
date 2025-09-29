@@ -13,13 +13,14 @@ class EmailAttachmentProcessor:
     """Example integration with email attachment processing."""
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
     
-    def __init__(self, access_token, db : DBService, download_dir: Optional[Union[str, Path]] = None):
+    def __init__(self, access_token, db : DBService, user_id: int, download_dir: Optional[Union[str, Path]] = None):
         # Use /data as default directory
         self.file_processor = FileProcessor(download_dir or "/metadata")
         self.download_dir = self.file_processor.download_dir
         self.headers = {"Authorization": f"Bearer {access_token}"}
         self.llm_service = LLMService()
         self.db = db
+        self.user_id = user_id
     
     def _get(self, endpoint: str, params: dict = None) -> Dict:
         """Placeholder for your API get method."""
@@ -74,7 +75,7 @@ class EmailAttachmentProcessor:
                         attachment_data, attachment_id, filename
                     )
 
-                    self.process_attachements_llm(attachment_info, email_fk_id)
+                    self.process_attachements_llm(attachment_info, email_fk_id, self.user_id)
 
                     self._save(attachment_id, attachment_info, email_fk_id, filename)
 

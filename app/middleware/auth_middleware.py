@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.services.jwt_service import JwtService
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=True)
 
 def jwt_middleware(
     credentials: HTTPAuthorizationCredentials = Depends(security),
