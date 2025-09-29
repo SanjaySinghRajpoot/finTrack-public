@@ -45,7 +45,14 @@ class EmailAttachmentProcessor:
             self.db.save_attachment(attachment_obj)
         else:
             print("attachment already exists, skipping ")
-    
+
+    def process_attachements_llm(self, attachment_info, email_fk_id, user_id=2):
+        try:
+            response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
+            processed_data_obj = create_processed_email_data(user_id=user_id, email_id=email_fk_id, data=response)
+            self.db.save_proccessed_email_data(processed_email_data=processed_data_obj)
+        except Exception as e:
+            return e
     
     def download_attachments(self, msg_id: str, email_fk_id: int, payload: Dict) -> List[Dict]:
         try:
@@ -67,17 +74,7 @@ class EmailAttachmentProcessor:
                         attachment_data, attachment_id, filename
                     )
 
-                    # Now the pdf has been processed now I need to convert the text from the attachement into a proper json response that I can save in the
-                    # the database, which can be displayed on the frontend this will be displayed on the user dashboard
-
-                    response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
-
-                    print(response.get("price"))
-                    print(response)
-
-                     # I need to save all this data in the database table from where the information will be displayed to the user
-                    processed_data_obj = create_processed_email_data(user_id=2, email_id=email_fk_id, data=response)
-                    self.db.save_proccessed_email_data(processed_email_data=processed_data_obj)
+                    self.process_attachements_llm(attachment_info, email_fk_id)
 
                     self._save(attachment_id, attachment_info, email_fk_id, filename)
 

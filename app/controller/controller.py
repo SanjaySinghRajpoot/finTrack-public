@@ -87,7 +87,6 @@ class GmailClient:
             subject, sender = self._extract_headers(headers_list)
             body = self._decode_body(msg_data["payload"])
 
-
             # Saving the data in the Database - make this a sepearate class
             email_obj = self.db.get_email_by_id(msg_id)
 
@@ -107,8 +106,6 @@ class GmailClient:
             email_attachements = EmailAttachmentProcessor(self.access_token, self.db)
 
             attachments = email_attachements.download_attachments(msg_id, email_obj.id, msg_data["payload"])
-
-            # I need to call the gemini api here for data processsing
 
             emails.append({
                 "id": msg_id,
