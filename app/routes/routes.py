@@ -1,11 +1,11 @@
 from requests import Session
 from app.db_config import SessionLocal
+from app.middleware.auth_middleware import jwt_middleware
 from app.models.scheme import TokenRequest
 from fastapi import APIRouter, Request, Depends
 from app.services.db_service import DBService
 from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
 from app.controller.controller import GmailClient
-
 router = APIRouter()
 
 def get_db():
@@ -23,7 +23,7 @@ def login():
 @router.get("/emails/oauth2callback")
 def oauth2callback(request: Request, code: str, db: Session = Depends(get_db)):
     tokens = exchange_code_for_tokens(code, db)
-    return {"message": "OAuth Success. Now call /emails", "tokens": tokens}
+    return tokens
 
 @router.post("/emails")
 def get_emails(
@@ -44,8 +44,10 @@ def get_emails(
         return e
 
 @router.get("/payment/info")
-def get_payment_info():
+def get_payment_info(user=Depends(jwt_middleware)):
     try:
-        pass
+        user_id = user.get("user_id")
+
+        print(user_id)
     except Exception as e:
         return e

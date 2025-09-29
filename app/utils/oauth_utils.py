@@ -1,14 +1,13 @@
-import datetime
-import os
 import requests
 import urllib.parse
 from fastapi import Request
 import os
 from dotenv import load_dotenv
-import jwt
+
 from requests import Session
 
 from app.models.models import User
+from app.services.jwt_service import JwtService
 
 load_dotenv()
 
@@ -24,14 +23,6 @@ SCOPES = [
 AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-
-# ====== Default Config Values (can be overridden with env vars) ======
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRY_MINUTES = int(os.getenv("JWT_EXPIRY_MINUTES", "60"))
-# ================================================================
-
-
 def generate_auth_url():
     params = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -42,33 +33,6 @@ def generate_auth_url():
         "prompt": "consent"
     }
     return f"{AUTH_BASE_URL}?{urllib.parse.urlencode(params)}"
-
-
-
-class JwtService:
-    def __init__(self, secret: str = JWT_SECRET, algorithm: str = JWT_ALGORITHM, expiry_minutes: int = 60):
-        self.secret = secret
-        self.algorithm = algorithm
-        self.expiry_minutes = expiry_minutes
-
-    def create_token(self, user_id: int, email: str):
-        payload = {
-            "sub": str(user_id),
-            "email": email,
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=self.expiry_minutes),
-            "iat": datetime.datetime.utcnow()
-        }
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
-
-    def verify_token(self, token: str):
-        try:
-            decoded = jwt.decode(token, self.secret, algorithms=[self.algorithm])
-            return decoded
-        except jwt.ExpiredSignatureError:
-            raise ValueError("Token has expired")
-        except jwt.InvalidTokenError:
-            raise ValueError("Invalid token")
-
 
 def exchange_code_for_tokens(code: str, db: Session):
     try:
