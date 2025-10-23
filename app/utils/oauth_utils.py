@@ -34,6 +34,7 @@ def generate_auth_url():
     }
     return f"{AUTH_BASE_URL}?{urllib.parse.urlencode(params)}"
 
+
 def exchange_code_for_tokens(code: str, db: Session):
     try:
         data = {
@@ -43,7 +44,7 @@ def exchange_code_for_tokens(code: str, db: Session):
             "redirect_uri":  [
             "http://localhost:8000/auth/callback",
             "http://localhost:8000/api/emails/oauth2callback"
-        ],  # ✅ use one value only
+        ],
             "grant_type": "authorization_code"
         }
         resp = requests.post(TOKEN_URL, data=data)
@@ -65,7 +66,8 @@ def exchange_code_for_tokens(code: str, db: Session):
         # Step 2: Check if user exists in DB, else create
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email)
+            user = User(email=email, first_name=user_info.get("name"), profile_image=user_info.get("picture"), locale="hi", country="India")
+
             db.add(user)
             db.commit()
             db.refresh(user)
@@ -77,6 +79,8 @@ def exchange_code_for_tokens(code: str, db: Session):
         return {
             "jwt": jwt_token,
             "google_access_token": token_data.get('access_token'),
+            "google_refresh_token": token_data.get('refresh_token'),
+            "expires_in": token_data.get("expires_in"),
             "user": {"id": user.id, "email": user.email}
         }
 

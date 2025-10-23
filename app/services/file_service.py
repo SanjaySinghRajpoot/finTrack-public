@@ -1,258 +1,266 @@
 import base64
-import datetime
-import json
-import mimetypes
-import csv
 import io
-from pathlib import Path
-from typing import Dict, List, Optional, Union
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Optional
+
 import PyPDF2
-
-
-import requests
+from fastapi import UploadFile
 
 from app.models.models import Attachment
+from app.services.db_service import DBService
+from app.services.s3_service import S3Service
+from lib.requests import Session
 
-# Required imports for different file types
-try:
-    from PyPDF2 import PdfReader
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
 
-try:
-    from docx import Document
-    DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
+class FileType(Enum):
+    """Supported file types."""
+    PDF = "pdf"
 
-try:
-    import openpyxl
-    from openpyxl import load_workbook
-    XLSX_AVAILABLE = True
-except ImportError:
-    XLSX_AVAILABLE = False
 
-try:
-    import xlrd
-    XLS_AVAILABLE = True
-except ImportError:
-    XLS_AVAILABLE = False
+class ProcessingError(Exception):
+    """Custom exception for file processing errors."""
+    pass
 
-try:
-    from pptx import Presentation
-    PPTX_AVAILABLE = True
-except ImportError:
-    PPTX_AVAILABLE = False
+
+@dataclass
+class EmailMetadata:
+    """Email context for an attachment."""
+    subject: str
+    sender: str
+    date: str
+    message_id: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EmailMetadata":
+        """Create from dictionary with safe defaults."""
+        return cls(
+            subject=data.get("subject", "")[:1000],
+            sender=data.get("sender", ""),
+            date=data.get("date", ""),
+            message_id=data.get("message_id", ""),
+        )
+
+
+@dataclass
+class ProcessedAttachment:
+    """Result of successfully processing an attachment."""
+    attachment_id: str
+    filename: str
+    s3_key: str
+    file_type: str
+    mime_type: str
+    text_content: str
+    file_size: int
+    processed_at: datetime = field(default_factory=datetime.now)
+    email_metadata: Optional[EmailMetadata] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses if needed."""
+        result = {
+            "attachment_id": self.attachment_id,
+            "filename": self.filename,
+            "s3_key": self.s3_key,
+            "file_type": self.file_type,
+            "mime_type": self.mime_type,
+            "text_content": self.text_content,
+            "file_size": self.file_size,
+            "processed_at": self.processed_at.isoformat(),
+            "success": True,
+        }
+
+        if self.email_metadata:
+            result.update({
+                "email_subject": self.email_metadata.subject,
+                "email_sender": self.email_metadata.sender,
+                "email_date": self.email_metadata.date,
+                "message_id": self.email_metadata.message_id,
+            })
+
+        return result
+
+
+@dataclass
+class ProcessingFailure:
+    """Result of failed attachment processing."""
+    attachment_id: str
+    filename: str
+    error: str
+    processed_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses if needed."""
+        return {
+            "attachment_id": self.attachment_id,
+            "filename": self.filename,
+            "success": False,
+            "error": self.error,
+            "processed_at": self.processed_at.isoformat(),
+        }
+
+
+class PDFTextExtractor:
+    """Handles PDF text extraction logic."""
+
+    @staticmethod
+    def extract(file_data: bytes) -> str:
+        """Extract text from PDF binary data."""
+        text_pages = []
+
+        with io.BytesIO(file_data) as pdf_stream:
+            reader = PyPDF2.PdfReader(pdf_stream)
+
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    text_pages.append(text)
+
+        return "\n".join(text_pages)
 
 
 class FileProcessor:
     """
-    A comprehensive file processing class for extracting text content from various file formats.
-    
-    Supports: TXT, CSV, PDF, DOCX, DOC, XLSX, XLS, PPTX, and other text-based files.
+    Processes attachments from Gmail or other sources:
+    - Validates and decodes attachments
+    - Uploads to S3 using S3Service
+    - Extracts text content (PDFs only)
     """
-    
-    # Supported file extensions mapping
-    SUPPORTED_EXTENSIONS = {
-        'text': ['.txt', '.log', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml'],
-        'csv': ['.csv'],
-        'pdf': ['.pdf'],
-        'word': ['.docx', '.doc'],
-        'excel': ['.xlsx', '.xls'],
-        'powerpoint': ['.pptx', '.ppt']
-    }
-    
-    def __init__(self, download_dir: Optional[Union[str, Path]] = None):
+
+    SUPPORTED_EXTENSIONS = {".pdf"}
+    DEFAULT_MIME_TYPE = "application/pdf"
+
+    def __init__(self, db: DBService, s3_service: Optional[S3Service] = None):
         """
-        Initialize the FileProcessor.
-        
+        Initialize FileProcessor.
+
         Args:
-            download_dir (str or Path, optional): Directory to save downloaded files
+            s3_service: Optional S3Service instance for dependency injection
         """
-        # Default to /data directory
-        self.download_dir = Path.cwd() / "metadata"
-        self.download_dir.mkdir(exist_ok=True, parents=True)
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        
-        # Check available libraries
-        self._check_dependencies()
-    
-    def _check_dependencies(self) -> Dict[str, bool]:
-        """Check which file processing libraries are available."""
-        dependencies = {
-            'pdf': PDF_AVAILABLE,
-            'docx': DOCX_AVAILABLE,
-            'xlsx': XLSX_AVAILABLE,
-            'xls': XLS_AVAILABLE,
-            'pptx': PPTX_AVAILABLE
-        }
-        
-        missing = [lib for lib, available in dependencies.items() if not available]
-        if missing:
-            print(f"Warning: Missing libraries for {', '.join(missing)} processing")
-        
-        return dependencies
-    
-    def get_file_type(self, file_path: Union[str, Path]) -> str:
-        """
-        Determine the file type based on extension and MIME type.
-        
-        Args:
-            file_path: Path to the file
-            
-        Returns:
-            str: File type category
-        """
-        file_path = Path(file_path)
-        extension = file_path.suffix.lower()
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        
-        # Check each category
-        for category, extensions in self.SUPPORTED_EXTENSIONS.items():
-            if extension in extensions:
-                return category
-        
-        # Check by MIME type as fallback
-        if mime_type:
-            if 'text' in mime_type:
-                return 'text'
-            elif 'csv' in mime_type:
-                return 'csv'
-            elif 'pdf' in mime_type:
-                return 'pdf'
-            elif 'word' in mime_type or 'document' in mime_type:
-                return 'word'
-            elif 'excel' in mime_type or 'spreadsheet' in mime_type:
-                return 'excel'
-            elif 'presentation' in mime_type:
-                return 'powerpoint'
-        
-        return 'unknown'
-    
-    def is_supported(self, file_path: Union[str, Path]) -> bool:
-        """
-        Check if the file type is supported for text extraction.
-        
-        Args:
-            file_path: Path to the file
-            
-        Returns:
-            bool: True if file type is supported
-        """
-        return self.get_file_type(file_path) != 'unknown'
-    
-    def get_file_type(self, file_path: Union[str, Path]) -> str:
-        """Return the lowercase file extension without the dot."""
-        return Path(file_path).suffix.lower().lstrip(".")
+        self.s3_service = s3_service or S3Service()
+        self.text_extractor = PDFTextExtractor()
+        self.db = db
 
-    def extract_text(self, file_path: Union[str, Path]) -> str:
-        """Extract text from supported file types. Currently supports PDF."""
-        file_type = self.get_file_type(file_path)
+    def _get_file_extension(self, filename: str) -> str:
+        """Extract file extension without the dot."""
+        return Path(filename).suffix.lower().lstrip(".")
 
-        if file_type == "pdf":
-            return self._extract_pdf_text(file_path)
-        else:
-            raise ValueError(f"Unsupported file type: {file_type}")
+    def _is_supported_file(self, filename: str) -> bool:
+        """Check if file type is supported."""
+        return Path(filename).suffix.lower() in self.SUPPORTED_EXTENSIONS
 
-    def _extract_pdf_text(self, file_path: Union[str, Path]) -> str:
-        """Extract text from a PDF file."""
-        text_content = []
-        with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            for page in reader.pages:
-                text_content.append(page.extract_text() or "")
-        return "\n".join(text_content)
-
-        
-    
-    def save_file(self, file_data: bytes, filename: str) -> Path:
-        """
-        Save file data to the /data directory.
-        
-        Args:
-            file_data: Binary file data
-            filename: Name for the file
-            
-        Returns:
-            Path: Path to the saved file
-        """
-        file_path = self.download_dir / filename
-        with open(file_path, "wb") as f:
-            f.write(file_data)
-        return file_path
-    
-    def process_gmail_attachment(self, attachment_data: Dict, attachment_id: str, 
-                               filename: Optional[str] = None, msg_metadata: Optional[Dict] = None) -> Dict:
-        """
-        Process a Gmail attachment: save to /data and extract text.
-        
-        Args:
-            attachment_data: Attachment data from Gmail API
-            attachment_id: ID of the attachment
-            filename: Optional filename
-            msg_metadata: Optional email metadata (sender, subject, date, etc.)
-            
-        Returns:
-            Dict: Processed attachment information
-        """
+    def _decode_attachment(self, attachment_data: dict) -> bytes:
+        """Decode base64 attachment data."""
         try:
-            # Decode file data
-            file_data = base64.urlsafe_b64decode(attachment_data["data"])
-            
-            # Determine filename
-            if not filename:
-                filename = f"attachment_{attachment_id}"
-            
-            # Save file to /data directory
-            # here we would need to call the OCR to scan the documents
-            saved_file_path = self.save_file(file_data, filename)
-            
-            # Extract text content from saved file
-            file_type = self.get_file_type(saved_file_path)
-            text_content = ""
-            
-            if self.is_supported(saved_file_path):
-                text_content = self.extract_text(saved_file_path)
-            
-            # Prepare response
-            result = {
-                'attachment_id': attachment_id,
-                'filename': filename,
-                'file_path': str(saved_file_path),
-                'file_type': "pdf",
-                'mime_type': "pdf",
-                'text_content': text_content,
-                'file_size': 0,
-                'is_supported': "true",
-                'processed_at': datetime.datetime.now().isoformat(),
-                'success': True
-            }
-            
-            # Add email metadata if provided
+            return base64.urlsafe_b64decode(attachment_data["data"])
+        except (KeyError, ValueError) as e:
+            raise ProcessingError(f"Failed to decode attachment data: {e}")
+
+    def  _create_upload_file(self, filename: str, file_data: bytes) -> UploadFile:
+        """Create FastAPI UploadFile object from bytes."""
+        return UploadFile(filename=filename, file=io.BytesIO(file_data))
+
+    def _generate_default_filename(self, attachment_id: str) -> str:
+        """Generate default filename if none provided."""
+        return f"attachment_{attachment_id}.pdf"
+
+    async def _save_attachment(self, attachment_id, attachment_info, email_fk_id, filename):
+        attachment_obj = self.db.get_attachment_by_id(attachment_id)
+
+        if not attachment_obj:
+            attachment_obj = Attachment(
+                email_id=email_fk_id,
+                attachment_id=attachment_id,
+                filename=filename,
+                mime_type=attachment_info.get('mime_type'),
+                size=attachment_info.get("file_size"),
+                storage_path=attachment_info.get("file_path"),
+                extracted_text=attachment_info.get("text_content"),
+                s3_url=attachment_info.get("s3_key")
+            )
+            self.db.save_attachment(attachment_obj)
+        else:
+            print("attachment already exists, skipping ")
+
+    async def process_gmail_attachment(
+            self,
+            attachment_data: dict,
+            attachment_id: str,
+            filename: Optional[str] = None,
+            msg_metadata: Optional[dict] = None,
+            email_id: int = None,
+    ) -> dict:
+        """
+        Process a Gmail attachment.
+
+        Args:
+            attachment_data: Dictionary containing base64-encoded 'data' key
+            attachment_id: Unique identifier for the attachment
+            filename: Original filename (optional)
+            msg_metadata: Email metadata dictionary (optional)
+            email_id: email fk
+
+        Returns:
+            ProcessedAttachment on success, ProcessingFailure on error
+        """
+        filename = filename or self._generate_default_filename(attachment_id)
+
+        try:
+            # Validate file type
+            if not self._is_supported_file(filename):
+                raise ProcessingError(
+                    f"Unsupported file type: {self._get_file_extension(filename)}"
+                )
+
+            # Decode attachment
+            file_data = self._decode_attachment(attachment_data)
+
+            # Upload to S3
+            upload_file = self._create_upload_file(filename, file_data)
+            s3_key = self.s3_service.upload_pdf(upload_file)
+
+            # Extract text content
+            text_content = self.text_extractor.extract(file_data)
+
+            # Parse email metadata if provided
+            email_meta = None
             if msg_metadata:
-                result.update({
-                    'email_subject': msg_metadata.get('subject', '')[:1000],  # Limit length
-                    'email_sender': msg_metadata.get('sender', ''),
-                    'email_date': msg_metadata.get('date', ''),
-                    'message_id': msg_metadata.get('message_id', '')
-                })
-            
-            self.logger.info(f"Successfully processed attachment: {filename}")
-            return result
-            
+                email_meta = EmailMetadata.from_dict(msg_metadata)
+
+            # Create success result
+            result = ProcessedAttachment(
+                attachment_id=attachment_id,
+                filename=filename,
+                s3_key=s3_key,
+                file_type=self._get_file_extension(filename),
+                mime_type=self.DEFAULT_MIME_TYPE,
+                text_content=text_content,
+                file_size=len(file_data),
+                email_metadata=email_meta,
+            )
+
+            self.logger.info(
+                f"Successfully processed attachment: {filename} (size: {len(file_data)} bytes)"
+            )
+
+            await self._save_attachment(attachment_id, result.to_dict(), email_id, filename)
+
+            return result.to_dict()
+
+        except ProcessingError as e:
+            self.logger.error(f"Processing error for {filename}: {e}")
+            return ProcessingFailure(
+                attachment_id=attachment_id,
+                filename=filename,
+                error=str(e),
+            ).to_dict()
         except Exception as e:
-            error_msg = f"Error processing attachment {attachment_id}: {str(e)}"
-            self.logger.error(error_msg)
-            
-            return {
-                'attachment_id': attachment_id,
-                'filename': filename or f"attachment_{attachment_id}",
-                'success': False,
-                'error': error_msg,
-                'processed_at': datetime.datetime.now().isoformat()
-            }
-
-
+            self.logger.exception(f"Unexpected error processing {filename}")
+            return ProcessingFailure(
+                attachment_id=attachment_id,
+                filename=filename,
+                error=f"Unexpected error: {str(e)}",
+            ).to_dict()
