@@ -2,6 +2,164 @@
 
 A modern full-stack financial tracking application that combines automated email processing with manual expense management. Built with FastAPI backend and React frontend, featuring Gmail integration for automatic transaction processing, intelligent document parsing, and a credit-based subscription system.
 
+## 🏗️ Backend Code Structure
+
+```
+app/
+├── main.py                    # FastAPI application entry point with lifespan management
+├── db_config.py              # Database configuration and session management
+├── alembic.ini               # Alembic configuration for database migrations
+│
+├── controller/               # Request handling and business logic coordination
+│   └── controller.py         # Main controller with endpoint logic
+│
+├── middleware/               # Custom middleware for request processing
+│   ├── auth_middleware.py    # JWT authentication middleware
+│   └── request_id_middleware.py  # Request ID tracking for logging
+│
+├── models/                   # SQLAlchemy database models
+│   └── models.py            # Complete database schema definitions
+│       ├── User, UserToken  # User management and authentication
+│       ├── Source, Email    # Email processing and source tracking
+│       ├── Attachment       # File storage and metadata
+│       ├── ProcessedEmailData, ProcessedItem  # Extracted financial data
+│       ├── Expense          # Manual expense management
+│       ├── Plan, Feature, Subscription  # Subscription and billing
+│       ├── Integration*     # Integration framework tables
+│       └── CreditHistory    # Credit usage tracking
+│
+├── routes/                   # API endpoint definitions
+│   └── routes.py            # All REST API routes and FastAPI router
+│
+├── services/                 # Business logic and external integrations
+│   ├── subscription_service.py   # Credit management and billing logic
+│   ├── gmail_service.py          # Gmail API integration and email processing
+│   ├── user_service.py           # User management and profile operations
+│   ├── db_service.py             # Database operations and queries
+│   ├── integration_service.py    # Integration framework management
+│   ├── email_attachment_service.py  # Email attachment processing
+│   ├── llm_service.py            # AI/LLM document processing
+│   ├── s3_service.py             # AWS S3 file storage operations
+│   ├── file_service.py           # File handling and processing
+│   ├── jwt_service.py            # JWT token management
+│   ├── token_service.py          # OAuth token operations
+│   └── cron_service.py           # Scheduled background jobs
+│       ├── Every24HoursCronJob   # Gmail sync automation
+│       ├── Every1HourTokenRefreshCronJob  # Token refresh
+│       └── IsEmailProcessedCheckCRON      # Email processing check
+│
+├── utils/                    # Utility functions and helpers
+│   ├── exception_handlers.py     # Centralized error handling
+│   ├── exceptions.py             # Custom exception definitions
+│   ├── oauth_utils.py            # OAuth flow utilities
+│   └── utils.py                  # General utility functions
+│
+└── migrations/               # Database migration files (Alembic)
+    ├── env.py               # Alembic environment configuration
+    ├── script.py.mako       # Migration template
+    └── versions/            # Individual migration files
+
+Root Level Files:
+├── docker-compose.yml        # Multi-container Docker setup
+├── Dockerfile               # Backend container definition
+├── nginx.conf               # Nginx reverse proxy configuration
+├── credentials.json         # Google OAuth credentials
+└── requirements.txt         # Python dependencies
+```
+
+### 🔧 Architecture Overview
+
+#### **Entry Point (`main.py`)**
+- FastAPI application initialization with lifespan management
+- CORS middleware configuration
+- APScheduler setup for background jobs
+- Centralized exception handler registration
+- Health check endpoints
+
+#### **Controllers (`controller/`)**
+- Request/response handling and validation
+- Business logic coordination between services
+- Input sanitization and output formatting
+- Error handling and HTTP status management
+
+#### **Services Layer (`services/`)**
+- **Core Services:**
+  - `subscription_service.py`: Credit-based billing, plan management, feature validation
+  - `gmail_service.py`: Gmail API integration, email fetching, OAuth handling
+  - `user_service.py`: User profile management, authentication logic
+  - `db_service.py`: Database operations, query optimization, transaction management
+
+- **Integration Services:**
+  - `integration_service.py`: Multi-provider integration framework
+  - `email_attachment_service.py`: Email attachment processing and extraction
+  - `llm_service.py`: AI-powered document analysis and data extraction
+  - `s3_service.py`: AWS S3 file storage and retrieval
+
+- **Utility Services:**
+  - `jwt_service.py`: JWT token creation and validation
+  - `token_service.py`: OAuth token refresh and management
+  - `file_service.py`: File processing and metadata extraction
+  - `cron_service.py`: Scheduled job definitions and execution
+
+#### **Models (`models/`)**
+- SQLAlchemy ORM models with relationships
+- Enum definitions for status and types
+- Database indexes and constraints
+- Mixins for common functionality (timestamps, soft delete)
+
+#### **Routes (`routes/`)**
+- RESTful API endpoint definitions
+- Request/response models with Pydantic
+- Authentication and authorization decorators
+- API documentation with FastAPI automatic schema generation
+
+#### **Middleware (`middleware/`)**
+- JWT authentication validation
+- Request ID generation for tracing
+- Cross-cutting concerns like logging and monitoring
+
+#### **Utils (`utils/`)**
+- Custom exception classes and handlers
+- OAuth flow utilities
+- Common helper functions
+- Configuration management
+
+### 🔄 Data Flow Architecture
+
+```
+HTTP Request
+    ↓
+Middleware (Auth, Request ID)
+    ↓
+Routes (FastAPI Router)
+    ↓
+Controller (Request Validation)
+    ↓
+Services (Business Logic)
+    ↓
+Models (Database Operations)
+    ↓
+Response (JSON/HTTP)
+```
+
+### 🏃 Background Jobs Flow
+
+```
+APScheduler
+    ├── Gmail Sync Job (Every 6 Hours)
+    │   ├── Credit Validation → Gmail Service
+    │   ├── Email Fetching → Attachment Service
+    │   └── Data Processing → LLM Service
+    │
+    ├── Token Refresh (Every 1 Hour)
+    │   └── OAuth Token Management
+    │
+    └── Email Processing (Every 6 Hours)
+        ├── Unprocessed Email Detection
+        ├── AI Document Analysis
+        └── Structured Data Extraction
+```
+
 ## 🚀 Features
 
 ### Core Functionality
