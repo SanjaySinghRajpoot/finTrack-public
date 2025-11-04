@@ -1,6 +1,6 @@
 # FinTrack
 
-A modern full-stack financial tracking application that combines automated email processing with manual expense management. Built with FastAPI backend and React frontend, featuring Gmail integration for automatic transaction processing and intelligent document parsing.
+A modern full-stack financial tracking application that combines automated email processing with manual expense management. Built with FastAPI backend and React frontend, featuring Gmail integration for automatic transaction processing, intelligent document parsing, and a credit-based subscription system.
 
 ## 🚀 Features
 
@@ -11,13 +11,24 @@ A modern full-stack financial tracking application that combines automated email
 - **Import System**: Review and import automatically processed transactions
 - **User Dashboard**: Analytics and insights with expense categorization
 - **Real-time Sync**: Scheduled background jobs for email synchronization
+- **Credit-Based Billing**: Subscription plans with credit allocation for feature usage
+- **Multi-Integration Support**: Extensible integration framework for Gmail, WhatsApp, and more
+
+### Subscription & Credit System
+- **Flexible Plans**: Trial, active, and custom subscription plans with credit allocation
+- **Feature-Based Billing**: Different features consume different amounts of credits
+- **Credit Tracking**: Real-time credit balance monitoring and usage history
+- **Auto Credit Validation**: Automatic credit validation before feature execution
+- **Subscription Management**: Trial periods, renewals, and plan upgrades
 
 ### Technical Features
 - **JWT Authentication**: Secure user authentication with Google OAuth2
 - **RESTful API**: Well-structured API endpoints with proper validation
 - **Database Management**: PostgreSQL with Alembic migrations
 - **File Storage**: AWS S3 integration for document storage
-- **Background Tasks**: APScheduler for automated email processing
+- **Background Tasks**: APScheduler for automated email processing and token refresh
+- **Credit Management**: Comprehensive subscription and billing system
+- **Integration Framework**: Modular integration system with status tracking
 - **Responsive UI**: Modern React frontend with TypeScript
 - **State Management**: Redux Toolkit for client-side state
 - **Docker Support**: Containerized deployment
@@ -134,6 +145,13 @@ The application will be available at:
 ### User Management
 - `GET /api/user` - Get user profile
 - `GET /api/user/settings` - Get user integration settings
+- `GET /api/user/subscription` - Get user subscription details and credit balance
+
+### Subscription Management
+- `POST /api/subscription/create` - Create starter subscription for new users
+- `GET /api/subscription/features` - Get available features and credit costs
+- `GET /api/subscription/usage` - Get credit usage history and statistics
+- `POST /api/subscription/validate` - Validate credits for specific feature usage
 
 ### Expense Management
 - `POST /api/expense` - Create new expense
@@ -143,8 +161,14 @@ The application will be available at:
 - `DELETE /api/expense/{id}` - Delete expense
 
 ### Email & Document Processing
-- `POST /api/emails` - Trigger email processing
+- `POST /api/emails` - Trigger email processing (consumes credits)
 - `GET /api/payment/info` - Get processed email data (importable transactions)
+
+### Integration Management
+- `GET /api/integrations` - List available integrations
+- `POST /api/integrations/{type}/connect` - Connect new integration
+- `GET /api/integrations/status` - Get user's integration status
+- `PUT /api/integrations/{id}/sync` - Trigger manual sync
 
 ### File Management
 - `GET /api/attachment/view` - Get signed URL for PDF viewing
@@ -152,17 +176,33 @@ The application will be available at:
 
 ### System
 - `GET /` - API status
-- `GET /health` - Health check with scheduler status
+- `GET /health` - Health check with scheduler status and active jobs
 
 ## 🗃 Database Schema
 
-### Key Tables
+### Core Tables
 - **users** - User profiles and authentication
 - **expenses** - Manual expense entries
+- **sources** - Source tracking for data lineage
 - **emails** - Processed Gmail messages
 - **processed_email_data** - Extracted financial data from emails
+- **processed_items** - Individual line items from invoices
 - **attachments** - File metadata and S3 references
-- **integration_status** - OAuth token management
+
+### Subscription & Billing Tables
+- **plans** - Available subscription plans with credit allocation
+- **features** - System features with credit costs
+- **plan_features** - Junction table for plan-feature relationships
+- **subscriptions** - User subscriptions with credit tracking
+- **credit_history** - Transaction log for credit usage
+
+### Integration Tables
+- **integrations** - Master table for available integrations
+- **integration_status** - User-specific integration status and sync tracking
+- **integration_features** - Junction table for integration-feature relationships
+- **email_config** - Gmail integration configuration
+- **whatsapp_config** - WhatsApp integration configuration (future)
+- **user_tokens** - OAuth tokens for various providers
 
 ## 🔄 Database Migrations
 
@@ -209,10 +249,66 @@ OPENAI_API_KEY=your-openai-api-key
 
 ## 🔄 Background Jobs
 
-The application runs scheduled tasks for:
-- **Email Synchronization**: Fetches new emails every 24 hours
-- **Token Refresh**: Refreshes OAuth tokens every hour
-- **Document Processing**: Processes attachments and extracts financial data
+The application runs scheduled cron jobs using APScheduler:
+
+### Every 6 Hours - Gmail Sync Job
+- **Purpose**: Fetches new emails from connected Gmail accounts
+- **Credit Validation**: Validates user credits before processing
+- **Features**: 
+  - Credit-based processing (1 credit per Gmail sync operation)
+  - Automatic email content extraction
+  - PDF attachment processing
+  - Batch processing for multiple users
+  - Error handling and logging
+
+### Every 1 Hour - Token Refresh Job
+- **Purpose**: Refreshes expired OAuth tokens
+- **Features**:
+  - Automatic token renewal for Google OAuth
+  - Prevents integration disconnection
+  - Handles token expiration gracefully
+
+### Every 6 Hours - Email Processing Job
+- **Purpose**: Processes unprocessed emails and extracts financial data
+- **Features**:
+  - LLM-powered document analysis
+  - Attachment text extraction
+  - Structured data extraction for invoices and bills
+  - Item-level detail extraction
+
+## 💳 Subscription System
+
+### Credit-Based Billing
+The application uses a credit-based system where different features consume different amounts of credits:
+
+- **Gmail Sync**: 1 credit per sync operation
+- **Email Processing**: 1 credit per email processed
+- **PDF Extraction**: 2 credits per PDF processed
+- **LLM Processing**: 3 credits per AI analysis
+
+### Subscription Plans
+- **Starter Plan**: 100 credits, 30-day trial
+- **Custom Plans**: Configurable credit allocation and pricing
+- **Auto-renewal**: Configurable subscription renewal
+
+### Credit Management
+- Real-time credit balance tracking
+- Usage history and analytics
+- Credit validation before feature execution
+- Automatic credit deduction after successful operations
+
+## 🔗 Integration Framework
+
+### Supported Integrations
+- **Gmail**: Full email sync and processing with OAuth2
+- **WhatsApp** (Coming Soon): Message and media processing
+- **Google Drive** (Planned): Document sync and processing
+
+### Integration Features
+- **Status Tracking**: Real-time integration health monitoring
+- **Sync Management**: Configurable sync intervals and scheduling
+- **Error Handling**: Comprehensive error logging and recovery
+- **Configuration Management**: Per-integration settings and credentials
 
 ## 🚀 Deployment
 
@@ -234,6 +330,8 @@ docker-compose down
 - Set up monitoring and logging
 - Configure backup strategies for PostgreSQL
 - Set up CDN for static assets
+- Monitor credit usage and subscription renewals
+- Set up alerts for integration failures
 
 ## 📊 Features in Detail
 
@@ -243,16 +341,27 @@ docker-compose down
 - Downloads and processes PDF attachments
 - Extracts structured data using LLM services
 - Stores processed data for user review
+- Credit-based processing with validation
 
-### Expense Categories
-- Predefined categories with icons and colors
-- Custom categorization support
-- Analytics and reporting by category
+### Subscription Management
+- Trial subscriptions for new users
+- Credit allocation and tracking
+- Feature-based billing
+- Usage analytics and reporting
+- Flexible plan configuration
+
+### Integration Management
+- Modular integration framework
+- Status monitoring and health checks
+- Configurable sync schedules
+- Error handling and recovery
+- Multi-provider support
 
 ### Document Intelligence
-- PDF text extraction
+- PDF text extraction with credit tracking
 - LLM-powered financial data extraction
 - Support for invoices, bills, receipts, and tax documents
+- Item-level detail extraction for invoices
 - Structured data output with validation
 
 ## 📄 License
