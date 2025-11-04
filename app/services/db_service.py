@@ -3,10 +3,11 @@ from datetime import datetime, timedelta
 from typing import List
 
 from requests import Session
+from sqlalchemy import text
 from sqlalchemy.orm import defer, joinedload
 
 from app.models.models import Attachment, Email, ProcessedEmailData, UserToken, Expense, User, IntegrationStatus, \
-    EmailConfig, IntegrationState
+    EmailConfig, IntegrationState, Subscription, Feature, Plan, PlanFeature, Integration, IntegrationFeature
 
 
 class DBService:
@@ -31,7 +32,40 @@ class DBService:
         self.add(attachment)
 
     def save_proccessed_email_data(self, processed_email_data: ProcessedEmailData):
-        self.add(processed_email_data)
+
+        existing = (
+            self.db.query(ProcessedEmailData)
+            .filter_by(source_id=processed_email_data.source_id)
+            .first()
+        )
+
+        # If not found, add it to the DB
+        if not existing:
+            self.add(processed_email_data)
+
+    def get_not_processed_mails(self) -> List[Email]:
+        try:
+            return self.db.query(Email).filter_by(is_processed=False).all()
+        except Exception as e:
+            raise e
+
+    def update_email_status(self, email_ids: list[int]):
+        try:
+            if not email_ids:
+                return
+
+            query = text("""
+                UPDATE emails
+                SET is_processed = TRUE
+                WHERE id = ANY(:email_ids)
+            """)
+
+            self.db.execute(query, {"email_ids": email_ids})
+            self.db.commit()
+
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def get_processed_data(self, user_id: int, limit: int, offset: int):
         try:
@@ -73,6 +107,10 @@ class DBService:
 
     def get_email_by_id(self, msg_id):
         return self.db.query(Email).filter_by(gmail_message_id=msg_id).first()
+
+    def get_email_by_pk(self, email_id: int):
+        """Get email by primary key ID"""
+        return self.db.query(Email).filter_by(id=email_id).first()
 
     def get_user_id_from_integration_status(self):
         results = (
@@ -216,14 +254,34 @@ class DBService:
             print(f"Error updating processed data: {e}")
             raise e  # Re-raise so higher layers can handle/log it
 
-    # ------------------- Attachment Queries -------------
-
-    def get_attachement_data(self, email_id) -> Attachment:
+    def get_processed_data_by_id(self, processed_data_id: int) -> ProcessedEmailData:
+        """Get ProcessedEmailData by ID"""
         try:
-            return self.db.query(Attachment).filter(Attachment.email_id == email_id).first()
+            return (
+                self.db.query(ProcessedEmailData)
+                .filter(ProcessedEmailData.id == processed_data_id)
+                .first()
+            )
         except Exception as e:
             raise e
 
+    # ------------------- Attachment Queries -------------
+
+    def get_attachement_data(self, source_id) -> Attachment:
+        try:
+            return self.db.query(Attachment).filter(Attachment.source_id == source_id).first()
+        except Exception as e:
+            raise e
+
+    def get_attachments_by_email_id(self, email_id) -> List[Attachment]:
+        """Get attachments by email_id - finds source_id from email first"""
+        try:
+            email = self.get_email_by_pk(email_id)
+            if not email or not email.source_id:
+                return []
+            return self.db.query(Attachment).filter(Attachment.source_id == email.source_id).all()
+        except Exception as e:
+            raise e
 
     # ------------------ User Queries ---------------------
     def get_user_by_id(self, user_id) -> User:
@@ -251,8 +309,175 @@ class DBService:
         except Exception as e:
             raise e
 
-    def create_user(self, user_dict) -> User:
+    def update_user_details(self, user_id, updated_details):
         try:
-            pass
+            user = self.get_user_by_id(user_id)
+            if user is None:
+                return
+
+            for key, value in updated_details.items():
+                if hasattr(user, key) and value is not None:
+                    setattr(user, key, value)
+            user.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(user)
+
         except Exception as e:
+            raise e
+
+    # ------------------- Subscription & Feature Queries ---------------------
+    def get_user_subscription(self, user_id: int):
+        """
+        Get the active subscription for a user along with plan details.
+        """
+        try:
+            return (
+                self.db.query(Subscription)
+                .options(joinedload(Subscription.plan))
+                .filter(
+                    Subscription.user_id == user_id,
+                    Subscription.status.in_(['active', 'trial'])
+                )
+                .order_by(Subscription.created_at.desc())
+                .first()
+            )
+        except Exception as e:
+            raise e
+
+    def get_all_features(self):
+        """
+        Get all active features with their credit costs.
+        """
+        try:
+            return (
+                self.db.query(Feature)
+                .filter(Feature.is_active == True)
+                .all()
+            )
+        except Exception as e:
+            raise e
+
+    def get_plan_features(self, plan_id: int):
+        """
+        Get all features enabled for a specific plan.
+        """
+        try:
+            return (
+                self.db.query(PlanFeature, Feature)
+                .join(Feature, PlanFeature.feature_id == Feature.id)
+                .filter(
+                    PlanFeature.plan_id == plan_id,
+                    PlanFeature.is_enabled == True,
+                    Feature.is_active == True
+                )
+                .all()
+            )
+        except Exception as e:
+            raise e
+
+    def can_use_feature(self, user_id: int, feature_key: str):
+        """
+        Check if a user can use a specific feature based on their subscription credits
+        and plan permissions.
+        """
+        try:
+            # Get user's active subscription
+            subscription = self.get_user_subscription(user_id)
+            if not subscription:
+                return False, "No active subscription found"
+
+            # Get the feature details
+            feature = (
+                self.db.query(Feature)
+                .filter(
+                    Feature.feature_key == feature_key,
+                    Feature.is_active == True
+                )
+                .first()
+            )
+            
+            if not feature:
+                return False, "Feature not found"
+
+            # Check if feature is enabled in user's plan
+            plan_feature = (
+                self.db.query(PlanFeature)
+                .filter(
+                    PlanFeature.plan_id == subscription.plan_id,
+                    PlanFeature.feature_id == feature.id,
+                    PlanFeature.is_enabled == True
+                )
+                .first()
+            )
+
+            if not plan_feature:
+                return False, "Feature not available in current plan"
+
+            # Get the credit cost (use custom cost if set, otherwise default)
+            credit_cost = plan_feature.custom_credit_cost or feature.credit_cost
+
+            # Check if user has enough credits
+            if subscription.credit_balance >= credit_cost:
+                return True, "Feature available"
+            else:
+                return False, f"Insufficient credits. Required: {credit_cost}, Available: {subscription.credit_balance}"
+
+        except Exception as e:
+            raise e
+
+    # ------------------- Integration Management Queries ---------------------
+    def get_integration_by_slug(self, slug: str):
+        """
+        Get integration master record by slug.
+        """
+        try:
+            return (
+                self.db.query(Integration)
+                .filter(
+                    Integration.slug == slug,
+                    Integration.is_active == True
+                )
+                .first()
+            )
+        except Exception as e:
+            raise e
+
+    def get_integration_features(self, integration_id: int):
+        """
+        Get all features linked to an integration.
+        """
+        try:
+            return (
+                self.db.query(IntegrationFeature, Feature)
+                .join(Feature, IntegrationFeature.feature_id == Feature.id)
+                .filter(
+                    IntegrationFeature.integration_id == integration_id,
+                    IntegrationFeature.is_enabled == True,
+                    Feature.is_active == True
+                )
+                .order_by(IntegrationFeature.execution_order.nullslast())
+                .all()
+            )
+        except Exception as e:
+            raise e
+
+    def link_user_integration_to_master(self, user_integration_id: str, integration_master_id: int):
+        """
+        Link a user's integration status to the master integration record.
+        """
+        try:
+            user_integration = (
+                self.db.query(IntegrationStatus)
+                .filter(IntegrationStatus.id == user_integration_id)
+                .first()
+            )
+            
+            if user_integration:
+                user_integration.integration_master_id = integration_master_id
+                self.db.commit()
+                return user_integration
+            
+            return None
+        except Exception as e:
+            self.db.rollback()
             raise e

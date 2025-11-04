@@ -9,10 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db_config import engine
 from app.models import models
 from app.routes.routes import router
-from app.services.cron_service import Every24HoursCronJob, Every1HourTokenRefreshCronJob
+from app.services.cron_service import Every24HoursCronJob, Every1HourTokenRefreshCronJob, IsEmailProcessedCheckCRON
+from app.utils.exception_handlers import register_exception_handlers
+from app.middleware.request_id_middleware import RequestIDMiddleware
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Create database tables
@@ -32,6 +37,7 @@ async def lifespan(app: FastAPI):
         # Register all cron jobs
         Every24HoursCronJob(scheduler).register()
         Every1HourTokenRefreshCronJob(scheduler).register()
+        IsEmailProcessedCheckCRON(scheduler).register()
         # Add more cron jobs here as needed
 
         scheduler.start()
@@ -44,11 +50,15 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
         logger.info("Scheduler stopped!")
     except Exception as e:
+        logger.error(f"Error in lifespan: {str(e)}")
         raise e
 
 
 # Create FastAPI app
 app = FastAPI(title="FinTrack Running", lifespan=lifespan)
+
+# Add Request ID middleware (should be added before other middlewares)
+app.add_middleware(RequestIDMiddleware)
 
 # Configure CORS
 origins = ["*"]
@@ -60,6 +70,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register centralized exception handlers
+register_exception_handlers(app)
 
 # Include routers
 app.include_router(router, prefix="/api", tags=["api"])

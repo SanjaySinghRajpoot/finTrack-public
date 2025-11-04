@@ -29,13 +29,13 @@ class GmailOAuth:
         return build("gmail", "v1", credentials=creds)
 
 
-def create_processed_email_data(user_id: int, email_id: int, data: dict) -> ProcessedEmailData:
+def create_processed_email_data(user_id: int, source_id: int, email_id: int, data: dict) -> ProcessedEmailData:
     """
     Creates a ProcessedEmailData object from the given dictionary and saves it to the DB.
     
-    :param session: SQLAlchemy session
     :param user_id: ID of the user owning the email
-    :param email_id: ID of the source email
+    :param source_id: ID of the source (primary reference)
+    :param email_id: ID of the source email (kept for backward compatibility)
     :param data: Dictionary containing document information
     :return: ProcessedEmailData instance
     """
@@ -46,7 +46,8 @@ def create_processed_email_data(user_id: int, email_id: int, data: dict) -> Proc
 
     processed_data = ProcessedEmailData(
         user_id=user_id,
-        email_id=email_id,
+        source_id=source_id,  # Primary reference now
+        email_id=email_id,    # Keep for backward compatibility
         document_type=data.get("document_type"),
         title=data.get("title"),
         description=data.get("description"),

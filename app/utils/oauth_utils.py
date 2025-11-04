@@ -8,6 +8,7 @@ from requests import Session
 
 from app.models.models import User
 from app.services.jwt_service import JwtService
+from app.services.subscription_service import SubscriptionService
 
 load_dotenv()
 
@@ -66,11 +67,24 @@ def exchange_code_for_tokens(code: str, db: Session):
         # Step 2: Check if user exists in DB, else create
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email, first_name=user_info.get("name"), profile_image=user_info.get("picture"), locale="hi", country="India")
-
+            user = User(
+                email=email, 
+                first_name=user_info.get("name"), 
+                profile_image=user_info.get("picture"), 
+                locale="hi", 
+                country="India"
+            )
             db.add(user)
             db.commit()
             db.refresh(user)
+
+            # Create starter subscription for new user using SubscriptionService
+            subscription_service = SubscriptionService(db)
+            try:
+                subscription_service.create_starter_subscription(user.id)
+            except ValueError as e:
+                # Log the error but don't fail the authentication
+                print(f"Warning: Could not create starter subscription for user {user.id}: {e}")
 
         # Step 3: Create JWT token
         jwt_service = JwtService()

@@ -1,0 +1,465 @@
+from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Tuple
+from sqlalchemy.orm import Session
+from app.models.models import User, Plan, Subscription, SubscriptionStatus, Feature
+from app.services.db_service import DBService
+
+
+class SubscriptionService:
+    """Service class to handle subscription-related operations"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+        self.db_service = DBService(db)
+    
+    def create_starter_subscription(self, user_id: int) -> Subscription:
+        """
+        Create a starter subscription for a new user
+        
+        Args:
+            user_id: The ID of the user to create subscription for
+            
+        Returns:
+            Subscription: The created subscription object
+            
+        Raises:
+            ValueError: If user doesn't exist or already has an active subscription
+        """
+        # Verify user exists
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"User with ID {user_id} not found")
+        
+        # Check if user already has an active subscription
+        existing_subscription = self.db.query(Subscription).filter(
+            Subscription.user_id == user_id,
+            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.trial])
+        ).first()
+        
+        if existing_subscription:
+            raise ValueError(f"User {user_id} already has an active subscription")
+        
+        # Get or create starter plan
+        starter_plan = self._get_or_create_starter_plan()
+        
+        # Create subscription
+        subscription = Subscription(
+            user_id=user_id,
+            plan_id=starter_plan.id,
+            status=SubscriptionStatus.trial,
+            starts_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=30),  # 30-day trial
+            credit_balance=starter_plan.total_credits,
+            total_credits_allocated=starter_plan.total_credits,
+            auto_renewal=False  # Trial doesn't auto-renew
+        )
+        
+        self.db.add(subscription)
+        self.db.commit()
+        self.db.refresh(subscription)
+        
+        return subscription
+    
+    def _get_or_create_starter_plan(self) -> Plan:
+        """
+        Get existing starter plan or create one if it doesn't exist
+        
+        Returns:
+            Plan: The starter plan object
+        """
+        starter_plan = self.db.query(Plan).filter(Plan.slug == "starter").first()
+        
+        if not starter_plan:
+            starter_plan = self._create_default_starter_plan()
+        
+        return starter_plan
+    
+    def _create_default_starter_plan(self) -> Plan:
+        """
+        Create a default starter plan with predefined settings
+        
+        Returns:
+            Plan: The created starter plan object
+        """
+        starter_plan = Plan(
+            name="Starter Plan",
+            slug="starter",
+            price=0.0,
+            currency="INR",
+            billing_cycle="trial",
+            total_credits=100,  # Give 100 credits to start with
+            description="Free starter plan for new users",
+            is_active=True,
+            display_order=1
+        )
+        
+        self.db.add(starter_plan)
+        self.db.commit()
+        self.db.refresh(starter_plan)
+        
+        return starter_plan
+    
+    def get_user_active_subscription(self, user_id: int) -> Optional[Subscription]:
+        """
+        Get the active subscription for a user
+        
+        Args:
+            user_id: The ID of the user
+            
+        Returns:
+            Subscription or None: The active subscription if found
+        """
+        return self.db.query(Subscription).filter(
+            Subscription.user_id == user_id,
+            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.trial])
+        ).first()
+    
+    def update_subscription_status(self, subscription_id: int, status: SubscriptionStatus) -> Subscription:
+        """
+        Update the status of a subscription
+        
+        Args:
+            subscription_id: The ID of the subscription to update
+            status: The new status
+            
+        Returns:
+            Subscription: The updated subscription object
+            
+        Raises:
+            ValueError: If subscription not found
+        """
+        subscription = self.db.query(Subscription).filter(Subscription.id == subscription_id).first()
+        
+        if not subscription:
+            raise ValueError(f"Subscription with ID {subscription_id} not found")
+        
+        subscription.status = status
+        subscription.updated_at = datetime.utcnow()
+        
+        self.db.commit()
+        self.db.refresh(subscription)
+        
+        return subscription
+    
+    def deduct_credits(self, user_id: int, credits_to_deduct: int) -> bool:
+        """
+        Deduct credits from user's active subscription
+        
+        Args:
+            user_id: The ID of the user
+            credits_to_deduct: Number of credits to deduct
+            
+        Returns:
+            bool: True if credits were successfully deducted, False if insufficient credits
+            
+        Raises:
+            ValueError: If user has no active subscription
+        """
+        subscription = self.get_user_active_subscription(user_id)
+        
+        if not subscription:
+            raise ValueError(f"User {user_id} has no active subscription")
+        
+        if subscription.credit_balance < credits_to_deduct:
+            return False  # Insufficient credits
+        
+        subscription.credit_balance -= credits_to_deduct
+        subscription.updated_at = datetime.utcnow()
+        
+        self.db.commit()
+        
+        return True
+
+    def get_feature_credit_cost(self, feature_key: str) -> int:
+        """
+        Get the credit cost for a specific feature from the Features table
+        
+        Args:
+            feature_key: The feature key to look up (e.g., "GMAIL_SYNC")
+            
+        Returns:
+            int: The credit cost for the feature
+            
+        Raises:
+            ValueError: If feature not found and cannot be created
+        """
+        feature = self.db.query(Feature).filter(Feature.feature_key == feature_key).first()
+        
+        if not feature:
+            # Create default feature if it doesn't exist
+            feature = self._create_default_feature(feature_key)
+        
+        return feature.credit_cost
+    
+    def _create_default_feature(self, feature_key: str) -> Feature:
+        """
+        Create a default feature entry based on the feature key
+        
+        Args:
+            feature_key: The feature key to create
+            
+        Returns:
+            Feature: The created feature object
+        """
+        # Define default configurations for known features
+        feature_defaults = {
+            "GMAIL_SYNC": {
+                "display_name": "Gmail Sync",
+                "description": "Synchronize emails from Gmail account",
+                "credit_cost": 1,
+                "category": "integration"
+            },
+            "EMAIL_PROCESSING": {
+                "display_name": "Email Processing",
+                "description": "Process and extract data from emails",
+                "credit_cost": 1,
+                "category": "core"
+            },
+            "PDF_EXTRACTION": {
+                "display_name": "PDF Text Extraction",
+                "description": "Extract text and data from PDF attachments",
+                "credit_cost": 2,
+                "category": "core"
+            },
+            "LLM_PROCESSING": {
+                "display_name": "AI Processing",
+                "description": "Process documents using AI/LLM services",
+                "credit_cost": 3,
+                "category": "ai"
+            }
+        }
+        
+        feature_config = feature_defaults.get(feature_key, {
+            "display_name": feature_key.replace("_", " ").title(),
+            "description": f"Feature: {feature_key}",
+            "credit_cost": 1,
+            "category": "general"
+        })
+        
+        feature = Feature(
+            feature_key=feature_key,
+            display_name=feature_config["display_name"],
+            description=feature_config["description"],
+            credit_cost=feature_config["credit_cost"],
+            category=feature_config["category"],
+            is_active=True
+        )
+        
+        self.db.add(feature)
+        self.db.commit()
+        self.db.refresh(feature)
+        
+        return feature
+    
+    def validate_credits_for_feature(self, user_id: int, feature_key: str) -> dict:
+        """
+        Validate if user has sufficient credits for a specific feature
+        
+        Args:
+            user_id: The ID of the user
+            feature_key: The feature key to check
+            
+        Returns:
+            dict: Validation result with status, message, and credit info
+        """
+        # Get user's active subscription
+        active_subscription = self.get_user_active_subscription(user_id)
+        
+        if not active_subscription:
+            return {
+                "valid": False,
+                "error_code": "NO_SUBSCRIPTION",
+                "message": "No active subscription found. Please upgrade your plan.",
+                "current_credits": 0,
+                "required_credits": 0
+            }
+        
+        # Get feature credit cost
+        required_credits = self.get_feature_credit_cost(feature_key)
+        
+        if active_subscription.credit_balance < required_credits:
+            return {
+                "valid": False,
+                "error_code": "INSUFFICIENT_CREDITS",
+                "message": f"Insufficient credits. Required: {required_credits}, Available: {active_subscription.credit_balance}",
+                "current_credits": active_subscription.credit_balance,
+                "required_credits": required_credits
+            }
+        
+        return {
+            "valid": True,
+            "message": "Sufficient credits available",
+            "current_credits": active_subscription.credit_balance,
+            "required_credits": required_credits
+        }
+    
+    def deduct_credits_for_feature(self, user_id: int, feature_key: str) -> dict:
+        """
+        Deduct credits for a specific feature usage
+        
+        Args:
+            user_id: The ID of the user
+            feature_key: The feature key being used
+            
+        Returns:
+            dict: Result of credit deduction with remaining balance
+        """
+        # Validate credits first
+        validation = self.validate_credits_for_feature(user_id, feature_key)
+        if not validation["valid"]:
+            return {
+                "success": False,
+                "error": validation["message"],
+                "error_code": validation["error_code"],
+                "credits_deducted": 0,
+                "remaining_credits": validation["current_credits"]
+            }
+        
+        # Deduct credits
+        credits_to_deduct = validation["required_credits"]
+        credit_deducted = self.deduct_credits(user_id, credits_to_deduct)
+        
+        if credit_deducted:
+            # Get updated subscription for remaining balance
+            updated_subscription = self.get_user_active_subscription(user_id)
+            remaining_credits = updated_subscription.credit_balance if updated_subscription else 0
+            
+            return {
+                "success": True,
+                "message": f"Credits deducted successfully for {feature_key}",
+                "credits_deducted": credits_to_deduct,
+                "remaining_credits": remaining_credits
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Credit deduction failed",
+                "error_code": "DEDUCTION_FAILED",
+                "credits_deducted": 0,
+                "remaining_credits": validation["current_credits"]
+            }
+
+    def get_user_subscription_details(self, user_id: int) -> Dict:
+        """
+        Get comprehensive subscription details for a user including credit balance
+        and plan information.
+        """
+        try:
+            subscription = self.db_service.get_user_subscription(user_id)
+            
+            if not subscription:
+                return {
+                    "has_subscription": False,
+                    "credit_balance": 0,
+                    "plan_name": None,
+                    "subscription_status": None
+                }
+
+            return {
+                "has_subscription": True,
+                "credit_balance": subscription.credit_balance,
+                "plan_name": subscription.plan.name,
+                "plan_slug": subscription.plan.slug,
+                "subscription_status": subscription.status.value,
+                "expires_at": subscription.expires_at,
+                "auto_renewal": subscription.auto_renewal
+            }
+
+        except Exception as e:
+            raise e
+
+    def get_feature_availability(self, user_id: int) -> Dict[str, Dict]:
+        """
+        Get availability status for all features based on user's subscription
+        and credit balance.
+        """
+        try:
+            subscription = self.db_service.get_user_subscription(user_id)
+            
+            if not subscription:
+                return {}
+
+            # Get all features enabled for the user's plan
+            plan_features = self.db_service.get_plan_features(subscription.plan_id)
+            
+            feature_availability = {}
+            
+            for plan_feature, feature in plan_features:
+                credit_cost = plan_feature.custom_credit_cost or feature.credit_cost
+                can_use = subscription.credit_balance >= credit_cost
+                
+                feature_availability[feature.feature_key] = {
+                    "display_name": feature.display_name,
+                    "description": feature.description,
+                    "credit_cost": credit_cost,
+                    "can_use": can_use,
+                    "category": feature.category,
+                    "reason": "Available" if can_use else f"Insufficient credits (Required: {credit_cost}, Available: {subscription.credit_balance})"
+                }
+
+            return feature_availability
+
+        except Exception as e:
+            raise e
+
+    def check_specific_feature_access(self, user_id: int, feature_key: str) -> Tuple[bool, str, Dict]:
+        """
+        Check if a user can access a specific feature and return detailed information.
+        
+        Returns:
+            Tuple of (can_use: bool, message: str, feature_details: dict)
+        """
+        try:
+            can_use, message = self.db_service.can_use_feature(user_id, feature_key)
+            
+            # Get additional feature details
+            subscription = self.db_service.get_user_subscription(user_id)
+            feature_details = {}
+            
+            if subscription:
+                plan_features = self.db_service.get_plan_features(subscription.plan_id)
+                for plan_feature, feature in plan_features:
+                    if feature.feature_key == feature_key:
+                        credit_cost = plan_feature.custom_credit_cost or feature.credit_cost
+                        feature_details = {
+                            "feature_key": feature.feature_key,
+                            "display_name": feature.display_name,
+                            "description": feature.description,
+                            "credit_cost": credit_cost,
+                            "category": feature.category,
+                            "current_balance": subscription.credit_balance
+                        }
+                        break
+
+            return can_use, message, feature_details
+
+        except Exception as e:
+            raise e
+
+    def get_credit_summary(self, user_id: int) -> Dict:
+        """
+        Get a summary of user's credit usage and balance.
+        """
+        try:
+            subscription = self.db_service.get_user_subscription(user_id)
+            
+            if not subscription:
+                return {
+                    "current_balance": 0,
+                    "total_allocated": 0,
+                    "credits_used": 0,
+                    "usage_percentage": 0
+                }
+
+            credits_used = subscription.total_credits_allocated - subscription.credit_balance
+            usage_percentage = (credits_used / subscription.total_credits_allocated * 100) if subscription.total_credits_allocated > 0 else 0
+
+            return {
+                "current_balance": subscription.credit_balance,
+                "total_allocated": subscription.total_credits_allocated,
+                "credits_used": credits_used,
+                "usage_percentage": round(usage_percentage, 2)
+            }
+
+        except Exception as e:
+            raise e

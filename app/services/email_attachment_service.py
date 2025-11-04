@@ -5,21 +5,19 @@ import requests
 from app.models.models import Attachment, Email
 from app.services.db_service import DBService
 from app.services.file_service import FileProcessor
-from app.services.llm_service import LLMService
-from app.utils.utils import create_processed_email_data
 
 
 class EmailAttachmentProcessor:
     """Example integration with email attachment processing."""
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
     
-    def __init__(self, access_token, db : DBService, user_id: int):
+    def __init__(self, access_token, db : DBService, user_id: int, processed_batch_size : int):
         # Use /data as default directory
         self.file_processor = FileProcessor(db)
         self.headers = {"Authorization": f"Bearer {access_token}"}
-        self.llm_service = LLMService()
         self.db = db
         self.user_id = user_id
+        self.processed_batch_size = processed_batch_size
     
     def _get(self, endpoint: str, params: dict = None) -> Dict:
         """Placeholder for your API get method."""
@@ -31,15 +29,6 @@ class EmailAttachmentProcessor:
             return resp.json()
         except Exception as e:
             return {}
-
-    def process_attachments_llm(self, attachment_info, email_fk_id, user_id=2):
-        try:
-            response = self.llm_service.call_gemini(text_content=attachment_info.get("text_content"))
-            processed_data_obj = create_processed_email_data(user_id=user_id, email_id=email_fk_id, data=response)
-            processed_data_obj.file_url = attachment_info.get("s3_url")
-            self.db.save_proccessed_email_data(processed_email_data=processed_data_obj)
-        except Exception as e:
-            return e
     
     async def download_attachments(self, msg_id: str, email_obj: Email, payload: Dict) -> List[Dict]:
         try:
@@ -58,8 +47,6 @@ class EmailAttachmentProcessor:
                     filename = part.get("filename")
 
                     attachment_info = await self.file_processor.process_gmail_attachment(attachment_data, attachment_id, filename, email_id=email_obj.id)
-
-                    self.process_attachments_llm(attachment_info, email_obj.id, self.user_id)
 
                     attachments.append(attachment_info)
             return attachments

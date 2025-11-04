@@ -13,7 +13,6 @@ from fastapi import UploadFile
 from app.models.models import Attachment
 from app.services.db_service import DBService
 from app.services.s3_service import S3Service
-from lib.requests import Session
 
 
 class FileType(Enum):
@@ -167,12 +166,31 @@ class FileProcessor:
         """Generate default filename if none provided."""
         return f"attachment_{attachment_id}.pdf"
 
+    def convert_to_processed_attachment(self, attachment: Attachment) -> ProcessedAttachment:
+        """
+        Convert an Attachment ORM object to a ProcessedAttachment instance.
+        """
+        return ProcessedAttachment(
+            attachment_id=attachment.id,
+            filename=attachment.filename,
+            s3_key=attachment.s3_url,
+            file_type=self._get_file_extension(attachment.filename),
+            mime_type=attachment.mime_type or self.DEFAULT_MIME_TYPE,
+            text_content=attachment.extracted_text,
+            file_size=attachment.size,
+        )
+
     async def _save_attachment(self, attachment_id, attachment_info, email_fk_id, filename):
         attachment_obj = self.db.get_attachment_by_id(attachment_id)
 
         if not attachment_obj:
+            # Get the source_id from the email
+            email = self.db.get_email_by_pk(email_fk_id)
+            if not email or not email.source_id:
+                raise ValueError(f"Email with id {email_fk_id} not found or has no source_id")
+            
             attachment_obj = Attachment(
-                email_id=email_fk_id,
+                source_id=email.source_id,  # Use source_id from email
                 attachment_id=attachment_id,
                 filename=filename,
                 mime_type=attachment_info.get('mime_type'),
@@ -220,7 +238,7 @@ class FileProcessor:
 
             # Upload to S3
             upload_file = self._create_upload_file(filename, file_data)
-            s3_key = self.s3_service.upload_pdf(upload_file)
+            s3_key = await self.s3_service.upload_pdf(upload_file)
 
             # Extract text content
             text_content = self.text_extractor.extract(file_data)

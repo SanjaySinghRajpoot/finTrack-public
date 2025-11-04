@@ -10,7 +10,11 @@ import os
 from app.routes.routes import get_db
 from app.services.db_service import DBService
 from app.services.gmail_service import GmailClient
+from app.services.llm_service import LLMService
 from app.services.token_service import TokenService
+from app.services.file_service import FileProcessor
+from app.services.subscription_service import SubscriptionService
+from app.models.models import Feature
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,10 +53,10 @@ class BaseCronJob(ABC):
 class Every24HoursCronJob(BaseCronJob):
 
     def get_trigger(self):
-        return IntervalTrigger(hours=24)
+        return IntervalTrigger(hours=6)
 
     async def execute(self):
-        """Execute the job logic"""
+        """Execute the job logic with credit validation"""
         try:
             logger.info(f"[{datetime.now()}] Every24HoursCronJob is running!")
 
@@ -60,29 +64,58 @@ class Every24HoursCronJob(BaseCronJob):
             db = next(db_gen)
             db_service = DBService(db)
             token_service = TokenService(db)
+            subscription_service = SubscriptionService(db)
+
+            # Get Gmail sync credit cost from SubscriptionService
+            gmail_sync_credit_cost = subscription_service.get_feature_credit_cost("GMAIL_SYNC")
+            logger.info(f"Gmail sync credit cost: {gmail_sync_credit_cost} credits per operation")
 
             # Get the integration ids as well so that we can update the data
             data = db_service.get_user_id_from_integration_status()
 
             # Making this more modular as we might need to fetch other integrations details as well
             for (user_id, integration_id) in data:
+                try:
+                    logger.info(f"Processing Gmail sync for user {user_id}")
 
-                # Update the integration status
-                db_service.update_sync_data(integration_id=integration_id)
+                    # Validate credits for Gmail sync using SubscriptionService
+                    credit_validation = subscription_service.validate_credits_for_feature(user_id, "GMAIL_SYNC")
+                    
+                    if not credit_validation["valid"]:
+                        logger.warning(f"⚠️ Skipping user {user_id}: {credit_validation['message']}")
+                        continue
 
-                access_token = token_service.get_token(user_id=user_id, provider="gmail")
-                if not access_token:
-                    logger.warning(f"⚠️ Skipping user {user_id}: No valid access token found.")
+                    # Update the integration status
+                    db_service.update_sync_data(integration_id=integration_id)
+
+                    access_token = token_service.get_token(user_id=user_id, provider="gmail")
+                    if not access_token:
+                        logger.warning(f"⚠️ Skipping user {user_id}: No valid access token found.")
+                        continue
+
+                    gmail_client = GmailClient(access_token, db_service, user_id)
+
+                    # Run Gmail sync
+                    sync_result = await gmail_client.fetch_emails()
+                    
+                    # Deduct credits only after successful sync
+                    if sync_result and len(sync_result) > 0:
+                        deduction_result = subscription_service.deduct_credits_for_feature(user_id, "GMAIL_SYNC")
+                        
+                        if deduction_result["success"]:
+                            logger.info(f"✅ Gmail sync completed for user {user_id}. Credits used: {deduction_result['credits_deducted']}, Remaining: {deduction_result['remaining_credits']}, Emails processed: {len(sync_result)}")
+                        else:
+                            logger.error(f"❌ Credit deduction failed for user {user_id}: {deduction_result['error']}")
+                    else:
+                        logger.info(f"📭 No new emails found for user {user_id}. No credits deducted.")
+
+                except Exception as user_error:
+                    logger.error(f"❌ Error processing user {user_id}: {str(user_error)}")
                     continue
 
-                gmail_client = GmailClient(access_token, db_service, user_id)
-
-                await gmail_client.fetch_emails()
-
-            # Simulating some work
-            logger.info("Processing task...")
-            logger.info("Task completed successfully!")
+            logger.info("Gmail sync cron job completed successfully!")
         except Exception as e:
+            logger.error(f"❌ Gmail sync cron job failed: {str(e)}")
             raise e
 
 class Every1HourTokenRefreshCronJob(BaseCronJob):
@@ -103,6 +136,47 @@ class Every1HourTokenRefreshCronJob(BaseCronJob):
             for user_id in user_ids:
                 logger.info(f"Updating token for {user_id}")
                 await token_service.renew_google_token(user_id=user_id)
+
+            logger.info("Task completed successfully!")
+        except Exception as e:
+            raise e
+
+class IsEmailProcessedCheckCRON(BaseCronJob):
+    def get_trigger(self):
+        return IntervalTrigger(hours=6)
+
+    async def execute(self):
+        try:
+            logger.info(f"--- Starting IsEmailProcessedCheckCRON ---")
+            db_gen = get_db()
+            db = next(db_gen)
+            db_service = DBService(db)
+
+            file_processor = FileProcessor(db)
+
+            emails = db_service.get_not_processed_mails()
+
+            processed_emails = []
+            for email in emails:
+
+                has_attachments = False
+                if email.attachments is not None:
+                    has_attachments = True
+
+                processed_emails.append({
+                    "email_id": email.id,
+                    "user_id": email.user_id,
+                    "from": email.from_address,
+                    "subject": email.subject,
+                    "body": email.plain_text_content,
+                    # we only process a single pdf file from the email
+                    "attachments": [file_processor.convert_to_processed_attachment(email.attachments[0]).to_dict()],
+                    "has_attachments": has_attachments
+                })
+
+                # Call the LLM service
+                llm_service = LLMService(email.user_id, db_service)
+                llm_service.llm_batch_processing(processed_emails)
 
             logger.info("Task completed successfully!")
         except Exception as e:

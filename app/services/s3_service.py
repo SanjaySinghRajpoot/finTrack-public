@@ -4,7 +4,7 @@ from fastapi import UploadFile, HTTPException
 from datetime import datetime, timedelta
 import os
 from typing import Optional
-
+import aioboto3
 
 class S3Service:
     def __init__(self):
@@ -38,7 +38,7 @@ class S3Service:
         except ClientError as e:
             raise HTTPException(status_code=500, detail=f"Error generating pre-signed URL: {e}")
 
-    def upload_pdf(self, file: UploadFile, folder: Optional[str] = "attachments") -> str:
+    async def upload_pdf(self, file: UploadFile, folder: Optional[str] = "attachments") -> str:
         """
         Upload a PDF file to the S3 bucket and return its file key.
         """
@@ -49,15 +49,18 @@ class S3Service:
             timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             file_key = f"{folder}/{timestamp}_{file.filename}"
 
-            self.s3_client.upload_fileobj(
-                file.file,
-                self.bucket_name,
-                file_key,
-                ExtraArgs={
-                    "ContentType": "application/pdf",
-                    "ACL": "private"  # use "public-read" if you want direct access
-                },
-            )
+            session = aioboto3.Session()
+
+            async with session.client("s3") as s3_client:
+                await s3_client.upload_fileobj(
+                    file.file,
+                    self.bucket_name,
+                    file_key,
+                    ExtraArgs={
+                        "ContentType": "application/pdf",
+                        "ACL": "private",  # or "public-read" if needed
+                    },
+                )
 
             return file_key
 

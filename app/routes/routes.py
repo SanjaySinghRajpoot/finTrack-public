@@ -3,7 +3,7 @@ from starlette.responses import JSONResponse
 
 from app.db_config import SessionLocal
 from app.middleware.auth_middleware import jwt_middleware
-from app.models.scheme import TokenRequest, ExpenseCreate, ExpenseUpdate
+from app.models.scheme import TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Query
 from app.controller.controller import EmailController, PaymentController, AuthController, ExpenseController, \
     AttachmentController, UserController
@@ -46,6 +46,15 @@ async def get_user(
     db: Session = Depends(get_db)
 ):
     return await UserController.get_user_info(user, db)
+
+@router.put("/user")
+async def update_user(
+    payload: UpdateUserDetailsPayload,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+
+    return await UserController.update_user_details(user, payload.to_dict(), db)
 
 
 @router.get("/user/settings")
