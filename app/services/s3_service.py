@@ -52,6 +52,9 @@ class S3Service:
             session = aioboto3.Session()
 
             async with session.client("s3") as s3_client:
+
+                file.file.seek(0)
+                
                 await s3_client.upload_fileobj(
                     file.file,
                     self.bucket_name,

@@ -1,6 +1,7 @@
 import os
 
 from dotenv import load_dotenv
+from fastapi import File, UploadFile
 from starlette.responses import JSONResponse, RedirectResponse
 
 from app.models.models import Expense, User
@@ -18,6 +19,9 @@ from app.utils.exceptions import (
     ExternalServiceError,
     DatabaseError
 )
+from app.services.file_service import FileProcessor
+from app.models.scheme import UploadSuccessResponse, UploadSuccessData, UploadErrorResponse
+from app.services.llm_service import LLMService, DocumentProcessingRequest
 
 load_dotenv()
 
@@ -76,7 +80,7 @@ class EmailController:
         return await gmail_client.fetch_emails()
 
 
-class PaymentController:
+class ProcessedDataController:
     @staticmethod
     def get_payment_info(user, db, limit: int, offset: int):
         user_id = user.get("user_id")
@@ -157,7 +161,7 @@ class ExpenseController:
         except Exception as e:
             raise DatabaseError(f"Failed to delete expense: {str(e)}")
 
-class AttachmentController:
+class FileController:
 
     @staticmethod
     def get_attachment(email_id: int, db):
@@ -168,22 +172,139 @@ class AttachmentController:
             return attachments[0] if attachments else None
         except Exception as e:
             raise DatabaseError(f"Failed to retrieve attachment: {str(e)}")
+        
+    @staticmethod
+    async def upload_file(file: UploadFile, user: dict, db, document_type: str = "INVOICE", upload_notes: str = None):
+        """
+        Upload a PDF file manually for a user with complete validation and error handling.
+        
+        Args:
+            file: The uploaded file
+            user: Authenticated user object from JWT middleware
+            db: Database session
+            document_type: Type of document (default: INVOICE)
+            upload_notes: Optional notes about the upload
+            
+        Returns:
+            JSONResponse with structured Pydantic response models
+        """
+        try:
+            # Validate file type
+            if not file.filename.lower().endswith('.pdf'):
+                error_response = UploadErrorResponse(error="Only PDF files are supported")
+                return JSONResponse(
+                    status_code=400, 
+                    content=error_response.dict()
+                )
+            
+            # Validate file size (e.g., max 10MB)
+            MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
+            file_content = await file.read()
+            if len(file_content) > MAX_FILE_SIZE:
+                error_response = UploadErrorResponse(error="File size exceeds 10MB limit")
+                return JSONResponse(
+                    status_code=400,
+                    content=error_response.dict()
+                )
+            
+            # Reset file position for processing
+            await file.seek(0)
+            
+            # Generate file hash for duplicate detection
+            from app.services.file_service import FileHashUtils
+            file_hash = await FileHashUtils.generate_file_hash(file)
+            
+            # Check for duplicate files
+            db_service = DBService(db)
+            duplicate_check = db_service.check_duplicate_file_by_hash(file_hash, user.get("user_id"))
+            
+            if duplicate_check.is_duplicate:
+                error_response = UploadErrorResponse(
+                    error=f"Duplicate file detected. This file was already uploaded as '{duplicate_check.existing_filename}'"
+                )
+                return JSONResponse(
+                    status_code=409,  # Conflict status code for duplicates
+                    content=error_response.dict()
+                )
+            
+            # Process the upload with hash
+            file_processor = FileProcessor(db_service, user.get("user_id"))
+            
+            result = await file_processor.upload_file_with_hash(
+                file=file,
+                user_id=user.get("user_id"),
+                document_type=document_type.upper(),
+                upload_notes=upload_notes,
+                file_hash=file_hash
+            )
+            
+            # Get the attachment to retrieve extracted text for LLM processing
+            attachment = db_service.get_attachment_by_id(result["attachment_id"])
+            if attachment and attachment.extracted_text:
+                # Get the source_id from the attachment
+                source_id = attachment.source_id
+                
+                # Create document processing request
+                processing_request = DocumentProcessingRequest(
+                    source_id=source_id,
+                    user_id=user.get("user_id"),
+                    document_type="manual_upload",
+                    text_content=attachment.extracted_text,
+                    metadata={
+                        "filename": result["filename"],
+                        "s3_key": result["s3_key"],
+                        "upload_method": "web_upload",
+                        "upload_notes": upload_notes,
+                        "file_hash": file_hash
+                    }
+                )
+                
+                # Process with LLM
+                try:
+                    llm_service = LLMService(user.get("user_id"), db_service)
+                    llm_results = llm_service.llm_manual_processing([processing_request])
+                    print(f"LLM processing completed with {len(llm_results)} results")
+                except Exception as llm_error:
+                    print(f"LLM processing failed: {llm_error}")
+                    # Don't fail the upload if LLM processing fails
+            
+            # Create structured success response
+            success_data = UploadSuccessData(
+                success=result["success"],
+                attachment_id=result["attachment_id"],
+                manual_upload_id=result["manual_upload_id"],
+                filename=result["filename"],
+                s3_key=result["s3_key"],
+                file_size=result["file_size"],
+                document_type=result["document_type"]
+            )
+            
+            success_response = UploadSuccessResponse(
+                message="File uploaded successfully",
+                data=success_data
+            )
+            
+            return JSONResponse(
+                status_code=200,
+                content=success_response.dict()
+            )
+            
+        except Exception as e:
+            error_response = UploadErrorResponse(error=f"Upload failed: {str(e)}")
+            return JSONResponse(
+                status_code=500, 
+                content=error_response.dict()
+            )
 
     @staticmethod
-    def get_attachment_signed_url(email_id: int, db):
+    def get_attachment_signed_url(s3_url: str, db):
         try:
-            db_service = DBService(db)
-            # Get attachments by email_id (which internally finds source_id)
-            attachments = db_service.get_attachments_by_email_id(email_id)
-            attachment = attachments[0] if attachments else None
-
-            if not attachment:
-                raise NotFoundError("Attachment", f"for email_id {email_id}")
-
             s3 = S3Service()
-            signed_url = s3.get_presigned_url(attachment.s3_url)
+            signed_url = s3.get_presigned_url(s3_url)
 
-            return signed_url
+            return {
+                "url": signed_url
+            } 
 
         except NotFoundError:
             raise
@@ -197,12 +318,12 @@ class UserController:
     async def get_user_info(user: dict, db):
         try:
             db_service = DBService(db)
-            user1 = db_service.get_user_by_id(user.get("user_id"))
+            user_obj = db_service.get_user_by_id(user.get("user_id"))
             
-            if not user1:
+            if not user_obj:
                 raise NotFoundError("User", str(user.get("user_id")))
 
-            return user1
+            return user_obj
         except NotFoundError:
             raise
         except Exception as e:

@@ -1,16 +1,35 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, ExternalLink } from "lucide-react";
-import { ImportedExpense } from "@/lib/api";
+import { Download, ExternalLink, FileText } from "lucide-react";
+import { ImportedExpense, api } from "@/lib/api";
 import { getCategoryConfig } from "@/lib/categories";
+import { useState } from "react";
 
 interface ImportedExpenseListProps {
   expenses: ImportedExpense[];
   onImport: (expense: ImportedExpense) => void;
+  onTransactionClick?: (expense: ImportedExpense) => void;
 }
 
-export function ImportedExpenseList({ expenses, onImport }: ImportedExpenseListProps) {
+export function ImportedExpenseList({ expenses, onImport, onTransactionClick }: ImportedExpenseListProps) {
+  const [loadingAttachment, setLoadingAttachment] = useState<number | null>(null);
+
+  const handleViewAttachment = async (expense: ImportedExpense) => {
+    if (!expense.attachment?.s3_url) return;
+    
+    setLoadingAttachment(expense.id);
+    try {
+      const response = await api.getAttachmentSignedUrl(expense.attachment.s3_url);
+      window.open(response.url, '_blank');
+    } catch (error) {
+      console.error('Failed to fetch attachment:', error);
+      // You could add a toast notification here if you have one set up
+    } finally {
+      setLoadingAttachment(null);
+    }
+  };
+
   if (expenses.length === 0) {
     return (
       <div className="text-center py-12">
@@ -24,6 +43,7 @@ export function ImportedExpenseList({ expenses, onImport }: ImportedExpenseListP
       {expenses.map((expense, index) => {
         const categoryConfig = getCategoryConfig(expense.category || "Other");
         const Icon = categoryConfig.icon;
+        const hasAttachment = expense.attachment?.s3_url;
 
         return (
           <Card key={index} className="shadow-sm hover:shadow-md transition-smooth border border-border/50 bg-card">
@@ -35,8 +55,11 @@ export function ImportedExpenseList({ expenses, onImport }: ImportedExpenseListP
                 >
                   <Icon className="h-5 w-5" style={{ color: categoryConfig.color }} />
                 </div>
-                
-                <div className="flex-1 min-w-0">
+
+                <div 
+                  className="flex-1 min-w-0 cursor-pointer" 
+                  onClick={() => onTransactionClick?.(expense)}
+                >
                   <div className="flex items-baseline gap-2 mb-1">
                     <h3 className="font-medium text-sm text-foreground truncate">{expense.title}</h3>
                     {expense.category && (
@@ -74,8 +97,31 @@ export function ImportedExpenseList({ expenses, onImport }: ImportedExpenseListP
                     </p>
                   </div>
                   
+                  {hasAttachment && (
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewAttachment(expense);
+                      }}
+                      size="sm"
+                      variant="outline"
+                      className="h-8 w-8 p-0"
+                      disabled={loadingAttachment === expense.id}
+                      title="View attachment"
+                    >
+                      {loadingAttachment === expense.id ? (
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  )}
+                  
                   <Button
-                    onClick={() => onImport(expense)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onImport(expense);
+                    }}
                     size="sm"
                     className="bg-gradient-to-r from-success to-success/80 hover:opacity-90 h-8"
                   >

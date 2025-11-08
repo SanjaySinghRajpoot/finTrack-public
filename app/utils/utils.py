@@ -1,5 +1,12 @@
+import hashlib
+from dataclasses import dataclass, field
 from datetime import datetime
+import io
 import os
+from typing import Optional, Tuple
+from fastapi import UploadFile
+
+import PyPDF2
 from app.models.models import ProcessedEmailData
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -69,3 +76,161 @@ def create_processed_email_data(user_id: int, source_id: int, email_id: int, dat
     )
 
     return processed_data
+
+@dataclass
+class EmailMetadata:
+    """Email context for an attachment."""
+    subject: str
+    sender: str
+    date: str
+    message_id: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EmailMetadata":
+        """Create from dictionary with safe defaults."""
+        return cls(
+            subject=data.get("subject", "")[:1000],
+            sender=data.get("sender", ""),
+            date=data.get("date", ""),
+            message_id=data.get("message_id", ""),
+        )
+
+
+@dataclass
+class ProcessedAttachment:
+    """Result of successfully processing an attachment."""
+    attachment_id: str
+    filename: str
+    s3_key: str
+    file_type: str
+    mime_type: str
+    text_content: str
+    file_size: int
+    processed_at: datetime = field(default_factory=datetime.now)
+    email_metadata: Optional[EmailMetadata] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses if needed."""
+        result = {
+            "attachment_id": self.attachment_id,
+            "filename": self.filename,
+            "s3_key": self.s3_key,
+            "file_type": self.file_type,
+            "mime_type": self.mime_type,
+            "text_content": self.text_content,
+            "file_size": self.file_size,
+            "processed_at": self.processed_at.isoformat(),
+            "success": True,
+        }
+
+        if self.email_metadata:
+            result.update({
+                "email_subject": self.email_metadata.subject,
+                "email_sender": self.email_metadata.sender,
+                "email_date": self.email_metadata.date,
+                "message_id": self.email_metadata.message_id,
+            })
+
+        return result
+
+
+@dataclass
+class ProcessingFailure:
+    """Result of failed attachment processing."""
+    attachment_id: str
+    filename: str
+    error: str
+    processed_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses if needed."""
+        return {
+            "attachment_id": self.attachment_id,
+            "filename": self.filename,
+            "success": False,
+            "error": self.error,
+            "processed_at": self.processed_at.isoformat(),
+        }
+
+class PDFTextExtractor:
+    """Handles PDF text extraction logic."""
+
+    @staticmethod
+    def extract(file_data: bytes) -> str:
+        """Extract text from PDF binary data."""
+        text_pages = []
+
+        with io.BytesIO(file_data) as pdf_stream:
+            reader = PyPDF2.PdfReader(pdf_stream)
+
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    text_pages.append(text)
+
+        return "\n".join(text_pages)
+
+
+@dataclass
+class DuplicateCheckResult:
+    """Result of duplicate file check."""
+    is_duplicate: bool
+    existing_attachment_id: Optional[int] = None
+    existing_filename: Optional[str] = None
+    existing_source_id: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "is_duplicate": self.is_duplicate,
+            "existing_attachment_id": self.existing_attachment_id,
+            "existing_filename": self.existing_filename,
+            "existing_source_id": self.existing_source_id
+        }
+
+
+class FileHashUtils:
+    """Utility functions for file hashing and duplicate detection."""
+
+    @staticmethod
+    async def generate_file_hash(file: UploadFile) -> str:
+        """
+        Generate SHA-256 hash of the uploaded file content.
+
+        Args:
+            file: FastAPI UploadFile object
+
+        Returns:
+            str: Hexadecimal SHA-256 hash of the file content
+        """
+        # Create SHA-256 hash object
+        sha256_hash = hashlib.sha256()
+
+        # Read file in chunks to handle large files efficiently
+        chunk_size = 8192  # 8KB chunks
+
+        # Reset file position to beginning
+        await file.seek(0)
+
+        while chunk := await file.read(chunk_size):
+            sha256_hash.update(chunk)
+
+        # Reset file position back to beginning for further processing
+        await file.seek(0)
+
+        return sha256_hash.hexdigest()
+
+    @staticmethod
+    def generate_file_hash_from_bytes(file_content: bytes) -> str:
+        """
+        Generate SHA-256 hash from file content bytes.
+
+        Args:
+            file_content: File content as bytes
+
+        Returns:
+            str: Hexadecimal SHA-256 hash of the file content
+        """
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(file_content)
+        return sha256_hash.hexdigest()

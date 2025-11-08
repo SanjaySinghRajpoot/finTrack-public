@@ -8,7 +8,7 @@ operations when certain database events occur.
 from sqlalchemy.event import listens_for
 from sqlalchemy.orm import Session
 
-from . import Email, Source, SourceType
+from . import Email, Source, SourceType, ManualUpload
 
 
 @listens_for(Email, 'after_insert')
@@ -27,7 +27,7 @@ def create_email_source(mapper, connection, target):
     try:
         # Create a new Source record for this email
         source_insert = Source.__table__.insert().values(
-            type=SourceType.email,
+            type=SourceType.email.value,
             external_id=str(target.id)
         )
         result = connection.execute(source_insert)
@@ -42,6 +42,33 @@ def create_email_source(mapper, connection, target):
     except Exception as e:
         # Log the error but don't raise to avoid breaking the email insertion
         print(f"Error creating source for email {target.id}: {e}")
+        # In production, you might want to use proper logging instead of print
+
+
+@listens_for(ManualUpload, 'after_insert')
+def create_manual_upload_source(mapper, connection, target):
+    """
+    Create a Source entry automatically after a ManualUpload is saved.
+    
+    This event handler ensures that every manual upload gets a corresponding
+    source record for unified tracking across the system.
+    
+    Args:
+        mapper: SQLAlchemy mapper
+        connection: Database connection
+        target: The ManualUpload instance that was inserted
+    """
+    try:
+        # Create a new Source record for this manual upload
+        source_insert = Source.__table__.insert().values(
+            type=SourceType.manual.value,
+            external_id=str(target.id)
+        )
+        result = connection.execute(source_insert)
+        
+    except Exception as e:
+        # Log the error but don't raise to avoid breaking the manual upload insertion
+        print(f"Error creating source for manual upload {target.id}: {e}")
         # In production, you might want to use proper logging instead of print
 
 

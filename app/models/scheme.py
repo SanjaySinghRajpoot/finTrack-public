@@ -22,9 +22,6 @@ class UpdateUserDetailsPayload(BaseModel):
         }
         return result
 
-
-
-
 class ExpenseBase(BaseModel):
     amount: condecimal(gt=0, decimal_places=2)  # amount must be positive
     currency: Optional[constr(max_length=10)] = "USD"
@@ -51,3 +48,23 @@ class ExpenseUpdate(BaseModel):
         }
 
         return data
+
+# Upload Response Models
+class UploadSuccessData(BaseModel):
+    """Success data for file upload response"""
+    success: bool = True
+    attachment_id: int
+    manual_upload_id: int
+    filename: str
+    s3_key: str
+    file_size: int
+    document_type: str
+
+class UploadSuccessResponse(BaseModel):
+    """Success response for file upload"""
+    message: str
+    data: UploadSuccessData
+
+class UploadErrorResponse(BaseModel):
+    """Error response for file upload"""
+    error: str

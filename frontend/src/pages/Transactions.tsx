@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseList } from "@/components/ExpenseList";
 import { ImportedExpenseList } from "@/components/ImportedExpenseList";
+import { TransactionDetailsModal } from "@/components/TransactionDetailsModal";
+import { FileUploadModal } from "@/components/FileUploadModal";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
-import { Plus, Receipt, Calendar } from "lucide-react";
+import { Plus, Receipt, Calendar, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api, Expense, CreateExpenseRequest, ImportedExpense } from "@/lib/api";
 import { startOfMonth, startOfWeek, endOfWeek, isWithinInterval, format } from "date-fns";
@@ -16,8 +18,11 @@ import { startOfMonth, startOfWeek, endOfWeek, isWithinInterval, format } from "
 const Transactions = () => {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
+  const [selectedTransaction, setSelectedTransaction] = useState<Expense | ImportedExpense | null>(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["expenses"],
@@ -35,6 +40,7 @@ const Transactions = () => {
     mutationFn: api.createExpense,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["importedExpenses"] });
       toast.success("Expense created successfully");
       setIsDialogOpen(false);
     },
@@ -93,6 +99,11 @@ const Transactions = () => {
     createMutation.mutate(expenseData);
   };
 
+  const handleTransactionClick = (transaction: Expense | ImportedExpense) => {
+    setSelectedTransaction(transaction);
+    setIsDetailsModalOpen(true);
+  };
+
   // Group expenses by month or week
   const groupedExpenses = useMemo(() => {
     if (viewMode === "month") {
@@ -146,6 +157,17 @@ const Transactions = () => {
               Weekly
             </Button>
           </div>
+          
+          {/* Upload Invoice Button */}
+          <Button 
+            className="bg-blue-600 hover:bg-blue-700 shadow-lg"
+            onClick={() => setIsUploadModalOpen(true)}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Upload Invoice
+          </Button>
+          
+          {/* Add Expense Button */}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button 
@@ -218,6 +240,7 @@ const Transactions = () => {
                         expenses={periodExpenses}
                         onEdit={handleEdit}
                         onDelete={(id) => deleteMutation.mutate(id)}
+                        onTransactionClick={handleTransactionClick}
                       />
                     </div>
                   ))}
@@ -238,12 +261,29 @@ const Transactions = () => {
                 <ImportedExpenseList
                   expenses={importedExpenses}
                   onImport={handleImport}
+                  onTransactionClick={handleTransactionClick}
                 />
               )}
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* File Upload Modal */}
+      <FileUploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+      />
+
+      {/* Transaction Details Modal */}
+      <TransactionDetailsModal
+        transaction={selectedTransaction}
+        isOpen={isDetailsModalOpen}
+        onClose={() => {
+          setIsDetailsModalOpen(false);
+          setSelectedTransaction(null);
+        }}
+      />
     </div>
   );
 };

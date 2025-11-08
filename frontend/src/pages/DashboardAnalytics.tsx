@@ -1,15 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatCardSkeleton } from "@/components/ui/stat-card-skeleton";
+import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseList } from "@/components/ExpenseList";
 import { ImportedExpenseList } from "@/components/ImportedExpenseList";
-import { DollarSign, TrendingDown, Calendar, TrendingUp, ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { api } from "@/lib/api";
+import { DollarSign, TrendingDown, Calendar, TrendingUp, Plus, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { api, CreateExpenseRequest } from "@/lib/api";
+import { toast } from "sonner";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 
 const DashboardAnalytics = () => {
+  const queryClient = useQueryClient();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
   const { data: user } = useQuery({
     queryKey: ["user"],
     queryFn: api.getUser,
@@ -27,6 +35,25 @@ const DashboardAnalytics = () => {
     queryFn: api.getImportedExpenses,
     retry: false,
   });
+
+  // Create expense mutation
+  const createMutation = useMutation({
+    mutationFn: api.createExpense,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["importedExpenses"] });
+      toast.success("Expense created successfully");
+      setIsDialogOpen(false);
+    },
+    onError: () => {
+      toast.error("Failed to create expense");
+    },
+  });
+
+  // Handle form submission
+  const handleSubmit = (data: CreateExpenseRequest) => {
+    createMutation.mutate(data);
+  };
 
   const getUserName = () => {
     if (user?.first_name) return user.first_name;
@@ -88,14 +115,37 @@ const DashboardAnalytics = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header with Greeting and Date */}
-      <div className="flex flex-col gap-2">
-        <div>
-          <h1 className="text-3xl md:text-4xl font-bold text-foreground">
-            Hi, {getUserName()} 👋
-          </h1>
-          <p className="text-base md:text-lg text-muted-foreground mt-2">{getCurrentDate()}</p>
+      {/* Header with Greeting, Date and Add Expense Button */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div className="flex flex-col gap-2">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold text-foreground">
+              Hi, {getUserName()} 👋
+            </h1>
+            <p className="text-base md:text-lg text-muted-foreground mt-2">{getCurrentDate()}</p>
+          </div>
         </div>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button 
+              className="bg-primary hover:bg-primary/90 shadow-lg self-start"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Expense
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle className="text-xl">
+                Add New Expense
+              </DialogTitle>
+            </DialogHeader>
+            <ExpenseForm
+              onSubmit={handleSubmit}
+              isLoading={createMutation.isPending}
+            />
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Stats Grid */}
@@ -113,7 +163,7 @@ const DashboardAnalytics = () => {
               title="Monthly Total"
               value={`$${monthlyTotal.toFixed(2)}`}
               icon={DollarSign}
-              trend={{ value: "8.2%", positive: false }}
+              // trend={{ value: "8.2%", positive: false }}
             />
             <StatCard
               title="Total Expenses"

@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import logging
 from dataclasses import dataclass, field
@@ -10,9 +11,10 @@ from typing import Optional
 import PyPDF2
 from fastapi import UploadFile
 
-from app.models.models import Attachment
+from app.models.models import Attachment, ManualUpload, DocumentType, SourceType
 from app.services.db_service import DBService
 from app.services.s3_service import S3Service
+from app.utils.utils import EmailMetadata, PDFTextExtractor, ProcessedAttachment, ProcessingFailure, FileHashUtils
 
 
 class FileType(Enum):
@@ -23,102 +25,6 @@ class FileType(Enum):
 class ProcessingError(Exception):
     """Custom exception for file processing errors."""
     pass
-
-
-@dataclass
-class EmailMetadata:
-    """Email context for an attachment."""
-    subject: str
-    sender: str
-    date: str
-    message_id: str
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "EmailMetadata":
-        """Create from dictionary with safe defaults."""
-        return cls(
-            subject=data.get("subject", "")[:1000],
-            sender=data.get("sender", ""),
-            date=data.get("date", ""),
-            message_id=data.get("message_id", ""),
-        )
-
-
-@dataclass
-class ProcessedAttachment:
-    """Result of successfully processing an attachment."""
-    attachment_id: str
-    filename: str
-    s3_key: str
-    file_type: str
-    mime_type: str
-    text_content: str
-    file_size: int
-    processed_at: datetime = field(default_factory=datetime.now)
-    email_metadata: Optional[EmailMetadata] = None
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for API responses if needed."""
-        result = {
-            "attachment_id": self.attachment_id,
-            "filename": self.filename,
-            "s3_key": self.s3_key,
-            "file_type": self.file_type,
-            "mime_type": self.mime_type,
-            "text_content": self.text_content,
-            "file_size": self.file_size,
-            "processed_at": self.processed_at.isoformat(),
-            "success": True,
-        }
-
-        if self.email_metadata:
-            result.update({
-                "email_subject": self.email_metadata.subject,
-                "email_sender": self.email_metadata.sender,
-                "email_date": self.email_metadata.date,
-                "message_id": self.email_metadata.message_id,
-            })
-
-        return result
-
-
-@dataclass
-class ProcessingFailure:
-    """Result of failed attachment processing."""
-    attachment_id: str
-    filename: str
-    error: str
-    processed_at: datetime = field(default_factory=datetime.now)
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary for API responses if needed."""
-        return {
-            "attachment_id": self.attachment_id,
-            "filename": self.filename,
-            "success": False,
-            "error": self.error,
-            "processed_at": self.processed_at.isoformat(),
-        }
-
-
-class PDFTextExtractor:
-    """Handles PDF text extraction logic."""
-
-    @staticmethod
-    def extract(file_data: bytes) -> str:
-        """Extract text from PDF binary data."""
-        text_pages = []
-
-        with io.BytesIO(file_data) as pdf_stream:
-            reader = PyPDF2.PdfReader(pdf_stream)
-
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    text_pages.append(text)
-
-        return "\n".join(text_pages)
-
 
 class FileProcessor:
     """
@@ -131,7 +37,7 @@ class FileProcessor:
     SUPPORTED_EXTENSIONS = {".pdf"}
     DEFAULT_MIME_TYPE = "application/pdf"
 
-    def __init__(self, db: DBService, s3_service: Optional[S3Service] = None):
+    def __init__(self, db: DBService, user_id : int, s3_service: Optional[S3Service] = None):
         """
         Initialize FileProcessor.
 
@@ -141,7 +47,8 @@ class FileProcessor:
         self.logger = logging.getLogger(__name__)
         self.s3_service = s3_service or S3Service()
         self.text_extractor = PDFTextExtractor()
-        self.db = db
+        self.db_service = db
+        self.user_id = user_id
 
     def _get_file_extension(self, filename: str) -> str:
         """Extract file extension without the dot."""
@@ -181,16 +88,17 @@ class FileProcessor:
         )
 
     async def _save_attachment(self, attachment_id, attachment_info, email_fk_id, filename):
-        attachment_obj = self.db.get_attachment_by_id(attachment_id)
+        attachment_obj = self.db_service.get_attachment_by_id(attachment_id)
 
         if not attachment_obj:
             # Get the source_id from the email
-            email = self.db.get_email_by_pk(email_fk_id)
+            email = self.db_service.get_email_by_pk(email_fk_id)
             if not email or not email.source_id:
                 raise ValueError(f"Email with id {email_fk_id} not found or has no source_id")
             
             attachment_obj = Attachment(
                 source_id=email.source_id,  # Use source_id from email
+                user_id=self.user_id,
                 attachment_id=attachment_id,
                 filename=filename,
                 mime_type=attachment_info.get('mime_type'),
@@ -199,7 +107,7 @@ class FileProcessor:
                 extracted_text=attachment_info.get("text_content"),
                 s3_url=attachment_info.get("s3_key")
             )
-            self.db.save_attachment(attachment_obj)
+            self.db_service.save_attachment(attachment_obj)
         else:
             print("attachment already exists, skipping ")
 
@@ -282,3 +190,190 @@ class FileProcessor:
                 filename=filename,
                 error=f"Unexpected error: {str(e)}",
             ).to_dict()
+        
+    async def upload_file(self, file: UploadFile, user_id: int, document_type: str = "INVOICE", upload_notes: str = None):
+        """
+        Upload a file manually (for ManualUpload table).
+        
+        Args:
+            file: FastAPI UploadFile object
+            user_id: ID of the user uploading the file
+            document_type: Type of document being uploaded
+            upload_notes: Optional notes about the upload
+            
+        Returns:
+            dict: Upload result with attachment and manual upload info
+        """
+        try:
+            # Validate file type
+            if not self._is_supported_file(file.filename):
+                raise ProcessingError(
+                    f"Unsupported file type: {self._get_file_extension(file.filename)}"
+                )
+
+            # Read file data
+            file_data = await file.read()
+            
+            # Upload to S3
+            s3_key = await self.s3_service.upload_pdf(file)
+            
+            # Extract text content
+            text_content = self.text_extractor.extract(file_data)
+            
+            # First create ManualUpload entry (this will trigger the event handler to create Source)
+            manual_upload = ManualUpload(
+                user_id=user_id,
+                document_type=DocumentType[document_type.upper()],
+                upload_method="web_upload",
+                upload_notes=upload_notes
+            )
+            self.db_service.add(manual_upload)
+            self.db_service.flush()  # This triggers the event handler to create Source
+            
+            # Get the created source from the event handler
+            # The event handler creates a Source with type=manual and external_id=manual_upload.id
+            from app.models.models import Source
+            source = self.db_service.db.query(Source).filter(
+                Source.type == "manual",
+                Source.external_id == str(manual_upload.id)
+            ).first()
+            
+            if not source:
+                raise ProcessingError("Failed to create source for manual upload")
+            
+            # Now create the Attachment with the source_id
+            attachment = Attachment(
+                source_id=source.id,
+                user_id=user_id,
+                attachment_id=f"manual_{user_id}_{int(datetime.now().timestamp())}",
+                filename=file.filename,
+                mime_type=file.content_type or self.DEFAULT_MIME_TYPE,
+                size=len(file_data),
+                storage_path=None,  # Using S3
+                s3_url=s3_key,
+                extracted_text=text_content
+            )
+            self.db_service.add(attachment)
+            self.db_service.flush()  # Get the attachment ID
+            
+            self.db_service.commit()
+
+            self.logger.info(
+                f"Successfully uploaded file: {file.filename} (size: {len(file_data)} bytes) for user {user_id}"
+            )
+            
+            return {
+                "success": True,
+                "attachment_id": attachment.id,
+                "manual_upload_id": manual_upload.id,
+                "filename": file.filename,
+                "s3_key": s3_key,
+                "file_size": len(file_data),
+                "document_type": document_type
+            }
+            
+        except ProcessingError as e:
+            self.db_service.db.rollback()
+            self.logger.error(f"Processing error for {file.filename}: {e}")
+            raise e
+        except Exception as e:
+            self.db_service.db.rollback()
+            self.logger.exception(f"Unexpected error processing {file.filename}")
+            raise ProcessingError(f"Upload failed: {str(e)}")
+
+    async def upload_file_with_hash(self, file: UploadFile, user_id: int, document_type: str = "INVOICE", upload_notes: str = None, file_hash: str = None):
+        """
+        Upload a file manually with hash storage for duplicate detection.
+        
+        Args:
+            file: FastAPI UploadFile object
+            user_id: ID of the user uploading the file
+            document_type: Type of document being uploaded
+            upload_notes: Optional notes about the upload
+            file_hash: SHA-256 hash of the file content
+            
+        Returns:
+            dict: Upload result with attachment and manual upload info
+        """
+        try:
+            # Validate file type
+            if not self._is_supported_file(file.filename):
+                raise ProcessingError(
+                    f"Unsupported file type: {self._get_file_extension(file.filename)}"
+                )
+
+            # Read file data
+            file_data = await file.read()
+            
+            # Generate hash if not provided
+            if not file_hash:
+                file_hash = FileHashUtils.generate_file_hash_from_bytes(file_data)
+            
+            # Upload to S3
+            s3_key = await self.s3_service.upload_pdf(file)
+            
+            # Extract text content
+            text_content = self.text_extractor.extract(file_data)
+            
+            # First create ManualUpload entry (this will trigger the event handler to create Source)
+            manual_upload = ManualUpload(
+                user_id=user_id,
+                document_type=DocumentType[document_type.upper()],
+                upload_method="web_upload",
+                upload_notes=upload_notes
+            )
+            self.db_service.add(manual_upload)
+            self.db_service.flush()  # This triggers the event handler to create Source
+            
+            # Get the created source from the event handler
+            # The event handler creates a Source with type=manual and external_id=manual_upload.id
+            from app.models.models import Source
+            source = self.db_service.db.query(Source).filter(
+                Source.type == "manual",
+                Source.external_id == str(manual_upload.id)
+            ).first()
+            
+            if not source:
+                raise ProcessingError("Failed to create source for manual upload")
+            
+            # Now create the Attachment with the source_id and file hash
+            attachment = Attachment(
+                source_id=source.id,
+                user_id=user_id,
+                attachment_id=f"manual_{user_id}_{int(datetime.now().timestamp())}",
+                filename=file.filename,
+                mime_type=file.content_type or self.DEFAULT_MIME_TYPE,
+                size=len(file_data),
+                file_hash=file_hash,  # Store the file hash
+                storage_path=None,  # Using S3
+                s3_url=s3_key,
+                extracted_text=text_content
+            )
+            self.db_service.add(attachment)
+            self.db_service.flush()  # Get the attachment ID
+            
+            self.db_service.commit()
+
+            self.logger.info(
+                f"Successfully uploaded file with hash: {file.filename} (size: {len(file_data)} bytes, hash: {file_hash[:16]}...) for user {user_id}"
+            )
+            
+            return {
+                "success": True,
+                "attachment_id": attachment.id,
+                "manual_upload_id": manual_upload.id,
+                "filename": file.filename,
+                "s3_key": s3_key,
+                "file_size": len(file_data),
+                "document_type": document_type,
+                "file_hash": file_hash
+            }
+            
+        except ProcessingError as e:
+            self.db_service.db.rollback()
+            self.logger.error(f"Processing error for {file.filename}: {e}")
+            raise e
+        except Exception as e:
+            self.db_service.db.rollback()
+            self.logger.exception(f"Unexpected error processing {file.filename}")
+            raise ProcessingError(f"Upload failed: {str(e)}")

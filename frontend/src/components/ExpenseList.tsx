@@ -9,9 +9,10 @@ interface ExpenseListProps {
   expenses: Expense[];
   onEdit: (expense: Expense) => void;
   onDelete: (id: number) => void;
+  onTransactionClick?: (expense: Expense) => void;
 }
 
-export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
+export function ExpenseList({ expenses, onEdit, onDelete, onTransactionClick }: ExpenseListProps) {
   if (expenses.length === 0) {
     return (
       <div className="text-center py-12">
@@ -37,7 +38,10 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                   <Icon className="h-5 w-5" style={{ color: categoryConfig.color }} />
                 </div>
                 
-                <div className="flex-1 min-w-0">
+                <div 
+                  className="flex-1 min-w-0 cursor-pointer" 
+                  onClick={() => onTransactionClick?.(expense)}
+                >
                   <div className="flex items-baseline gap-2">
                     <h3 className="font-medium text-sm text-foreground truncate">{expense.description}</h3>
                     <span className="text-xs px-2 py-0.5 rounded-md bg-accent/10 text-accent-foreground shrink-0">

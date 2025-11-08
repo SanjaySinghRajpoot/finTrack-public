@@ -4,11 +4,11 @@ from typing import List
 
 from requests import Session
 from sqlalchemy import text
-from sqlalchemy.orm import defer, joinedload
+from sqlalchemy.orm import defer, joinedload, selectinload
 
 from app.models.models import Attachment, Email, ProcessedEmailData, UserToken, Expense, User, IntegrationStatus, \
     EmailConfig, IntegrationState, Subscription, Feature, Plan, PlanFeature, Integration, IntegrationFeature
-
+from app.utils.utils import DuplicateCheckResult
 
 class DBService:
     def __init__(self, db_session: Session):
@@ -25,8 +25,33 @@ class DBService:
         except Exception as e:
             raise e
 
+    def flush(self):
+        try:
+            self.db.flush()
+        except Exception as e:
+            self.db.rollback()
+            raise e
+
+    def commit(self):
+        """Simple commit wrapper with rollback on error."""
+        try:
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise e
+
+    def update(self, obj):
+        try:
+            # self.db.merge(obj)  # merges state of 'obj' into the current session
+            self.db.commit()
+            self.db.refresh(obj)
+            return obj
+        except Exception as e:
+            self.db.rollback()  # rollback to maintain DB integrity
+            raise e
+
     def get_attachment_by_id(self, attachment_id: str):
-        return self.db.query(Attachment).filter_by(attachment_id=attachment_id).first()
+        return self.db.query(Attachment).filter_by(id=attachment_id).first()
 
     def save_attachment(self, attachment: Attachment):
         self.add(attachment)
@@ -69,12 +94,20 @@ class DBService:
 
     def get_processed_data(self, user_id: int, limit: int, offset: int):
         try:
-            # here we need to add another query to get attachment info and file url
+            # Query ProcessedEmailData with eager loading of related data
             query = (
                 self.db.query(ProcessedEmailData)
                 .filter(
                     ProcessedEmailData.user_id == user_id,
                     ProcessedEmailData.is_imported == False
+                )
+                .options(
+                    # Eager load processed items
+                    selectinload(ProcessedEmailData.processed_items),
+                    # Eager load attachment relationship
+                    joinedload(ProcessedEmailData.attachment),
+                    # Eager load source for additional context
+                    joinedload(ProcessedEmailData.source)
                 )
                 .offset(offset)
                 .limit(limit)
@@ -82,7 +115,7 @@ class DBService:
 
             results = query.all()
 
-            # Optional: total count for pagination metadata
+            # Total count for pagination metadata
             total_count = (
                 self.db.query(ProcessedEmailData)
                 .filter(
@@ -111,6 +144,10 @@ class DBService:
     def get_email_by_pk(self, email_id: int):
         """Get email by primary key ID"""
         return self.db.query(Email).filter_by(id=email_id).first()
+    
+    def get_email_by_source_id(self, source_id: int):
+        """Get email by source_id"""
+        return self.db.query(Email).filter_by(source_id=source_id).first()
 
     def get_user_id_from_integration_status(self):
         results = (
@@ -283,6 +320,52 @@ class DBService:
         except Exception as e:
             raise e
 
+    def check_duplicate_file_by_hash(self, file_hash: str, user_id: int = None) -> 'DuplicateCheckResult':
+        """
+        Check if a file with the given hash already exists in the database.
+        
+        Args:
+            file_hash: SHA-256 hash of the file
+            user_id: Optional user ID to check for user-specific duplicates
+            
+        Returns:
+            DuplicateCheckResult: Result object indicating if duplicate exists
+        """
+        try:
+
+            query = self.db.query(Attachment).filter(Attachment.file_hash == file_hash, Attachment.user_id == user_id)
+
+            existing_attachment = query.first()
+            
+            if existing_attachment:
+                return DuplicateCheckResult(
+                    is_duplicate=True,
+                    existing_attachment_id=existing_attachment.id,
+                    existing_filename=existing_attachment.filename,
+                    existing_source_id=existing_attachment.source_id
+                )
+            else:
+                return DuplicateCheckResult(is_duplicate=False)
+                
+        except Exception as e:
+            raise e
+
+    def get_attachment_by_hash(self, file_hash: str) -> Attachment:
+        """Get attachment by file hash"""
+        try:
+            return self.db.query(Attachment).filter(Attachment.file_hash == file_hash).first()
+        except Exception as e:
+            raise e
+
+    def save_attachment_with_hash(self, attachment: Attachment, file_hash: str):
+        """Save attachment with file hash"""
+        try:
+            attachment.file_hash = file_hash
+            self.add(attachment)
+            return attachment
+        except Exception as e:
+            raise e
+
     # ------------------ User Queries ---------------------
     def get_user_by_id(self, user_id) -> User:
         try:
@@ -423,6 +506,38 @@ class DBService:
                 return False, f"Insufficient credits. Required: {credit_cost}, Available: {subscription.credit_balance}"
 
         except Exception as e:
+            raise e
+
+    # ------------------- Processed Items Management ---------------------
+    def save_processed_items(self, processed_email_id: int, items_data: list):
+        """Save processed items for a given processed_email_data record"""
+        try:
+            from app.models.models import ProcessedItem
+            
+            if not items_data:
+                return
+                
+            for item_data in items_data:
+                processed_item = ProcessedItem(
+                    processed_email_id=processed_email_id,
+                    item_name=item_data.get("item_name"),
+                    item_code=item_data.get("item_code"),
+                    category=item_data.get("category"),
+                    quantity=item_data.get("quantity", 1.0),
+                    unit=item_data.get("unit"),
+                    rate=item_data.get("rate"),
+                    discount=item_data.get("discount", 0.0),
+                    tax_percent=item_data.get("tax_percent"),
+                    total_amount=item_data.get("total_amount"),
+                    currency=item_data.get("currency", "INR"),
+                    meta_data=item_data.get("meta_data")
+                )
+                self.db.add(processed_item)
+            
+            self.db.commit()
+            
+        except Exception as e:
+            self.db.rollback()
             raise e
 
     # ------------------- Integration Management Queries ---------------------

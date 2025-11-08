@@ -152,7 +152,6 @@ class IsEmailProcessedCheckCRON(BaseCronJob):
             db = next(db_gen)
             db_service = DBService(db)
 
-            file_processor = FileProcessor(db)
 
             emails = db_service.get_not_processed_mails()
 
@@ -163,6 +162,8 @@ class IsEmailProcessedCheckCRON(BaseCronJob):
                 if email.attachments is not None:
                     has_attachments = True
 
+                file_processor = FileProcessor(db, email.user_id)
+                
                 processed_emails.append({
                     "email_id": email.id,
                     "user_id": email.user_id,

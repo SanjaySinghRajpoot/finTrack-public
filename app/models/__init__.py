@@ -8,6 +8,10 @@ and registered when the models package is loaded.
 # Import all models to ensure they are registered with SQLAlchemy
 from .models import *
 
+# Import Pydantic schemas
+from .scheme import *
+from .integration_schemas import *
+
 # Import event handlers to ensure they are registered
 from . import event_handlers
 

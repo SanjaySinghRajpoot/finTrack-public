@@ -45,7 +45,7 @@ export function ExpenseForm({ onSubmit, defaultValues, isLoading }: ExpenseFormP
     resolver: zodResolver(expenseSchema),
     defaultValues: {
       amount: defaultValues?.amount?.toString() || "",
-      currency: defaultValues?.currency || "USD",
+      currency: defaultValues?.currency || "INR",
       category: defaultValues?.category || "",
       description: defaultValues?.description || "",
     },

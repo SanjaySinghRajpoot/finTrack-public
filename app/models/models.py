@@ -42,6 +42,7 @@ class SourceType(str, enum.Enum):
     email = "email"
     whatsapp = "whatsapp"
     gdrive = "gdrive"
+    manual = "manual"
 
 class DocumentType(enum.Enum):
     """Document types for processed email data"""
@@ -102,6 +103,7 @@ class User(Base, TimestampMixin):
     expenses = relationship("Expense", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
     integration_status = relationship("IntegrationStatus", back_populates="user", cascade="all, delete-orphan")
+    manual_uploads = relationship("ManualUpload", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -132,7 +134,9 @@ class Source(Base):
     __tablename__ = "sources"
 
     id = Column(Integer, primary_key=True)
-    type = Column(Enum(SourceType), nullable=False, index=True)
+    type = Column(String(50), nullable=False, index=True)
+
+    # Can we keep this an Int?
     external_id = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
@@ -209,6 +213,7 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     source_id = Column(Integer, ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True)
     attachment_id = Column(String(1000), unique=True, nullable=False)
 
@@ -216,6 +221,7 @@ class Attachment(Base):
     filename = Column(String(512), nullable=False)
     mime_type = Column(String(255), nullable=True)
     size = Column(Integer, nullable=True)
+    file_hash = Column(String(64), nullable=True, index=True)  # SHA-256 hash for duplicate detection
 
     # Storage references
     storage_path = Column(String(1024), nullable=True)
@@ -226,12 +232,42 @@ class Attachment(Base):
 
     # Relationships
     source = relationship("Source", back_populates="attachments")
+    # Relationship to ProcessedEmailData through source_id
+    processed_email_data = relationship(
+        "ProcessedEmailData",
+        primaryjoin="Attachment.source_id == foreign(ProcessedEmailData.source_id)",
+        viewonly=True,
+        uselist=False  # One attachment typically corresponds to one processed email data
+    )
+    # manual_uploads = relationship("ManualUpload", back_populates="attachment", cascade="all, delete-orphan")
     # Keep email relationship for backward compatibility during migration
     # email_id = Column(Integer, ForeignKey("emails.id", ondelete="CASCADE"), nullable=True)
     # email = relationship("Email", back_populates="attachments")
 
     def __repr__(self):
         return f"<Attachment(id={self.id}, filename={self.filename})>"
+
+class ManualUpload(Base, TimestampMixin):
+    """Manual upload records to track user-uploaded files"""
+    __tablename__ = "manual_uploads"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    uuid = Column(PG_UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False, index=True)
+
+    # References
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Upload metadata only (file details are in attachments table)
+    document_type = Column(Enum(DocumentType), nullable=False, default=DocumentType.INVOICE)
+    upload_method = Column(String(50), default="web_upload")  # web_upload, mobile_app, api
+    upload_notes = Column(Text, nullable=True)
+
+    # Relationships
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_manual_uploads_user_created", "user_id", "created_at"),
+    )
 
 class ProcessedEmailData(Base, TimestampMixin):
     """Processed and structured data extracted from emails"""
@@ -280,11 +316,26 @@ class ProcessedEmailData(Base, TimestampMixin):
     user = relationship("User", back_populates="processed_data")
     source = relationship("Source", back_populates="processed_data")
     email = relationship("Email", back_populates="processed_data")
+
+    # Relationship to Attachment through source_id
+    attachment = relationship(
+        "Attachment",
+        primaryjoin="ProcessedEmailData.source_id == foreign(Attachment.source_id)",
+        viewonly=True,
+        uselist=False  # One processed email data typically has one attachment
+    )
+
     # Link to expenses through source_id for proper data lineage
     expenses = relationship(
         "Expense",
         primaryjoin="ProcessedEmailData.source_id == foreign(Expense.source_id)",
         viewonly=True
+    )
+
+    processed_items = relationship(
+        "ProcessedItem",
+        backref="processed_email_data",
+        cascade="all, delete-orphan"
     )
 
     def __repr__(self):
@@ -321,18 +372,18 @@ class ProcessedItem(Base, TimestampMixin):
     rate = Column(Float, nullable=False, comment="Rate per unit of the item")
     discount = Column(Float, nullable=True, default=0.0, comment="Discount applied on the item, if any")
     tax_percent = Column(Float, nullable=True, comment="Applicable tax percentage")
-    total_amount = Column(Float, nullable=False, comment="Total amount for the item (after discount, before tax)")
+    total_amount = Column(Float, nullable=True, comment="Total amount for the item (after discount, before tax)")
 
     # Metadata
     currency = Column(String(10), default="INR", nullable=False)
     meta_data = Column(JSON, nullable=True, comment="Raw extracted or extra data (for auditing or debugging)")
 
     # Relationship
-    processed_email = relationship(
-        "ProcessedEmailData",
-        back_populates="items",
-        lazy="joined"
-    )
+    # processed_email = relationship(
+    #     "ProcessedEmailData",
+    #     back_populates="items",
+    #     lazy="joined"
+    # )
 
     def __repr__(self):
         return f"<ProcessedEmailItem(id={self.id}, item_name={self.item_name}, amount={self.total_amount})>"

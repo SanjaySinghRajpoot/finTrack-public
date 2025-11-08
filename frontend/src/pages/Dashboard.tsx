@@ -12,7 +12,7 @@ import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseList } from "@/components/ExpenseList";
 import { ImportedExpenseList } from "@/components/ImportedExpenseList";
 import { toast } from "sonner";
-import { Wallet, TrendingDown, Calendar, Plus, LogOut, DollarSign } from "lucide-react";
+import { Wallet, TrendingDown, Calendar, Plus, LogOut, DollarSign, CalendarDays, Receipt, Target, CalendarCheck } from "lucide-react";
 import { api, Expense, CreateExpenseRequest, ImportedExpense, getJwtCookie } from "@/lib/api";
 
 const Dashboard = () => {
@@ -40,6 +40,7 @@ const Dashboard = () => {
     mutationFn: api.createExpense,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["importedExpenses"] });
       toast.success("Expense created successfully");
       setIsDialogOpen(false);
     },
@@ -173,23 +174,23 @@ const Dashboard = () => {
               <StatCard
                 title="Monthly Total"
                 value={`$${monthlyTotal.toFixed(2)}`}
-                icon={DollarSign}
+                icon={CalendarCheck}
                 trend={{ value: "21%", positive: false }}
               />
               <StatCard
                 title="Total Expenses"
                 value={expenses.length.toString()}
-                icon={Calendar}
+                icon={Receipt}
               />
               <StatCard
                 title="This Month"
                 value={monthlyExpenses.length.toString()}
-                icon={TrendingDown}
+                icon={CalendarDays}
               />
               <StatCard
                 title="Average"
                 value={`$${avgExpense.toFixed(2)}`}
-                icon={Wallet}
+                icon={Target}
               />
             </>
           )}

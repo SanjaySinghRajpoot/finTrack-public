@@ -5,8 +5,8 @@ from app.db_config import SessionLocal
 from app.middleware.auth_middleware import jwt_middleware
 from app.models.scheme import TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Query
-from app.controller.controller import EmailController, PaymentController, AuthController, ExpenseController, \
-    AttachmentController, UserController
+from app.controller.controller import EmailController, ProcessedDataController, AuthController, ExpenseController, \
+    FileController, UserController
 from app.services.s3_service import S3Service
 
 router = APIRouter()
@@ -65,14 +65,14 @@ async def get_user(
     return await UserController.get_user_settings(user, db)
 
 
-# ----------- PAYMENT ROUTES -----------
-@router.get("/payment/info")
+# ----------- Processed Data ROUTES -----------
+@router.get("/processed-expense/info")
 def get_payment_info(user=Depends(jwt_middleware),
                      db: Session = Depends(get_db),
                      limit: int = Query(10, ge=1, le=100, description="Number of records per page"),
                      offset: int = Query(0, ge=0, description="Number of records to skip"),
                      ):
-    return PaymentController.get_payment_info(user, db, limit, offset)
+    return ProcessedDataController.get_payment_info(user, db, limit, offset)
 
 
 # ----------- EXPENSE ROUTES -----------
@@ -104,17 +104,16 @@ def delete_expense(expense_id: int, user=Depends(jwt_middleware), db: Session = 
 
 # -------- S3 ROUTES ---------------
 @router.get("/attachment/view")
-def view_pdf(email_id: int, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return AttachmentController.get_attachment_signed_url(email_id=email_id, db=db)
+def view_pdf(s3_url: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return FileController.get_attachment_signed_url(s3_url=s3_url, db=db)
 
-@router.post("/upload-pdf")
-async def upload_pdf_route(file: UploadFile = File(...)):
-    """
-    Upload a PDF to S3 and return a pre-signed URL to view/download it. we need to get this done
-    """
-    try:
-        s3_service = S3Service()
-        url = s3_service.upload_pdf(file)
-        return JSONResponse(content={"url": url})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+@router.post("/upload")
+async def upload_pdf_route(
+    file: UploadFile = File(...),
+    document_type: str = "INVOICE",
+    upload_notes: str = None,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """Upload a PDF file and create entries in ManualUpload and Attachment tables."""
+    return await FileController.upload_file(file, user, db, document_type, upload_notes)
