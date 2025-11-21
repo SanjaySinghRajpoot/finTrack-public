@@ -2,6 +2,15 @@
 
 A modern full-stack financial tracking application that combines automated email processing with manual expense management. Built with FastAPI backend and React frontend, featuring Gmail integration for automatic transaction processing, intelligent document parsing, and a credit-based subscription system.
 
+## Product Images
+<img width="2544" height="1272" alt="Screenshot 2025-11-16 at 6 36 42 PM" src="https://github.com/user-attachments/assets/60ae443b-0b86-47a2-bda2-a9c46321114b" />
+
+<img width="2557" height="1272" alt="Screenshot 2025-11-16 at 6 36 51 PM" src="https://github.com/user-attachments/assets/eae47f6e-9dc0-468e-8d1c-7ed5ff297f56" />
+
+<img width="2557" height="1272" alt="Screenshot 2025-11-16 at 6 36 58 PM" src="https://github.com/user-attachments/assets/8a730d14-4549-4c63-bcfa-bbeedca75297" />
+
+<img width="2557" height="1272" alt="Screenshot 2025-11-16 at 6 37 06 PM" src="https://github.com/user-attachments/assets/e4e1a393-ce05-45fe-87c5-87dabba70a9b" />
+
 ## 🏗️ Backend Code Structure
 
 ```
