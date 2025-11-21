@@ -66,10 +66,6 @@ class Every24HoursCronJob(BaseCronJob):
             token_service = TokenService(db)
             subscription_service = SubscriptionService(db)
 
-            # Get Gmail sync credit cost from SubscriptionService
-            gmail_sync_credit_cost = subscription_service.get_feature_credit_cost("GMAIL_SYNC")
-            logger.info(f"Gmail sync credit cost: {gmail_sync_credit_cost} credits per operation")
-
             # Get the integration ids as well so that we can update the data
             data = db_service.get_user_id_from_integration_status()
 
@@ -78,11 +74,11 @@ class Every24HoursCronJob(BaseCronJob):
                 try:
                     logger.info(f"Processing Gmail sync for user {user_id}")
 
-                    # Validate credits for Gmail sync using SubscriptionService
-                    credit_validation = subscription_service.validate_credits_for_feature(user_id, "GMAIL_SYNC")
+                    # Validate and deduct credits for Gmail sync using SubscriptionService
+                    credit_result = subscription_service.deduct_credits_for_feature(user_id, "GMAIL_SYNC")
                     
-                    if not credit_validation["valid"]:
-                        logger.warning(f"⚠️ Skipping user {user_id}: {credit_validation['message']}")
+                    if not credit_result.success:
+                        logger.warning(f"⚠️ Skipping user {user_id}: {credit_result.error or 'Credit validation failed'}")
                         continue
 
                     # Update the integration status
@@ -98,16 +94,11 @@ class Every24HoursCronJob(BaseCronJob):
                     # Run Gmail sync
                     sync_result = await gmail_client.fetch_emails()
                     
-                    # Deduct credits only after successful sync
+                    # Log results
                     if sync_result and len(sync_result) > 0:
-                        deduction_result = subscription_service.deduct_credits_for_feature(user_id, "GMAIL_SYNC")
-                        
-                        if deduction_result["success"]:
-                            logger.info(f"✅ Gmail sync completed for user {user_id}. Credits used: {deduction_result['credits_deducted']}, Remaining: {deduction_result['remaining_credits']}, Emails processed: {len(sync_result)}")
-                        else:
-                            logger.error(f"❌ Credit deduction failed for user {user_id}: {deduction_result['error']}")
+                        logger.info(f"✅ Gmail sync completed for user {user_id}. Credits used: {credit_result.credits_deducted}, Remaining: {credit_result.remaining_credits}, Emails processed: {len(sync_result)}")
                     else:
-                        logger.info(f"📭 No new emails found for user {user_id}. No credits deducted.")
+                        logger.info(f"📭 No new emails found for user {user_id}. Credits already deducted.")
 
                 except Exception as user_error:
                     logger.error(f"❌ Error processing user {user_id}: {str(user_error)}")

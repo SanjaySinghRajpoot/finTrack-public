@@ -1,9 +1,11 @@
 import os
+import base64
 
 from dotenv import load_dotenv
 from fastapi import File, UploadFile
 from starlette.responses import JSONResponse, RedirectResponse
 
+from app.constants.integration_constants import FeatureKey
 from app.models.models import Expense, User
 from app.services.s3_service import S3Service
 from app.services.token_service import TokenService
@@ -22,6 +24,7 @@ from app.utils.exceptions import (
 from app.services.file_service import FileProcessor
 from app.models.scheme import UploadSuccessResponse, UploadSuccessData, UploadErrorResponse
 from app.services.llm_service import LLMService, DocumentProcessingRequest
+from app.utils.decorators import deduct_credits
 
 load_dotenv()
 
@@ -174,9 +177,10 @@ class FileController:
             raise DatabaseError(f"Failed to retrieve attachment: {str(e)}")
         
     @staticmethod
-    async def upload_file(file: UploadFile, user: dict, db, document_type: str = "INVOICE", upload_notes: str = None):
+    @deduct_credits(feature_key=FeatureKey.FILE_UPLOAD.value)
+    async def upload_file(**kwargs):
         """
-        Upload a PDF file manually for a user with complete validation and error handling.
+        Upload a PDF file or image manually for a user with complete validation and error handling.
         
         Args:
             file: The uploaded file
@@ -188,14 +192,28 @@ class FileController:
         Returns:
             JSONResponse with structured Pydantic response models
         """
+        # Extract parameters from kwargs
+        file = kwargs.get('file')
+        user = kwargs.get('user')
+        db = kwargs.get('db')
+        document_type = kwargs.get('document_type', 'INVOICE')
+        upload_notes = kwargs.get('upload_notes')
+        
         try:
-            # Validate file type
-            if not file.filename.lower().endswith('.pdf'):
-                error_response = UploadErrorResponse(error="Only PDF files are supported")
+            # Validate file type - support both PDFs and images
+            allowed_extensions = {'.pdf', '.jpg', '.jpeg', '.png', '.webp'}
+            file_extension = file.filename.lower()
+            
+            if not any(file_extension.endswith(ext) for ext in allowed_extensions):
+                error_response = UploadErrorResponse(error="Only PDF and image files (JPG, PNG, WEBP) are supported")
                 return JSONResponse(
                     status_code=400, 
                     content=error_response.dict()
                 )
+            
+            # Determine if file is PDF or image
+            is_pdf = file_extension.endswith('.pdf')
+            is_image = file_extension.endswith(('.jpg', '.jpeg', '.png', '.webp'))
             
             # Validate file size (e.g., max 10MB)
             MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
@@ -227,56 +245,108 @@ class FileController:
                     content=error_response.dict()
                 )
             
-            # Process the upload with hash
+            # Reset file position again after hash generation
+            await file.seek(0)
+            
+            # Initialize file processor
             file_processor = FileProcessor(db_service, user.get("user_id"))
             
-            result = await file_processor.upload_file_with_hash(
+            # Step 1: Upload file and generate hash (FileProcessor handles this)
+            upload_result = await file_processor.upload_file_with_hash(
                 file=file,
-                user_id=user.get("user_id"),
-                document_type=document_type.upper(),
-                upload_notes=upload_notes,
                 file_hash=file_hash
             )
             
-            # Get the attachment to retrieve extracted text for LLM processing
-            attachment = db_service.get_attachment_by_id(result["attachment_id"])
-            if attachment and attachment.extracted_text:
-                # Get the source_id from the attachment
-                source_id = attachment.source_id
+            # Step 2: For PDFs - extract text; For images - convert to base64
+            text_content = None
+            image_base64 = None
+            
+            if is_pdf:
+                # Extract text from PDF
+                text_content = file_processor.extract_text(upload_result["file_data"])
+            elif is_image:
+                # Convert image to base64
+                image_base64 = base64.b64encode(upload_result["file_data"]).decode("utf-8")
+            
+            # Step 3: Create manual upload entry (triggers Source creation)
+            manual_upload = file_processor._create_manual_upload_entry(
+                user_id=user.get("user_id"),
+                document_type=document_type.upper(),
+                upload_notes=upload_notes
+            )
+            
+            # Step 4: Get the source created by event handler
+            source = file_processor._get_source_from_manual_upload(manual_upload.id)
+            
+            # Step 5: Create attachment entry
+            attachment = file_processor._create_attachment_entry(
+                source_id=source.id,
+                user_id=user.get("user_id"),
+                filename=upload_result["filename"],
+                file_data=upload_result["file_data"],
+                s3_key=upload_result["s3_key"],
+                file_hash=upload_result["file_hash"],
+                mime_type=upload_result["mime_type"],
+                extracted_text=text_content
+            )
+            
+            # Step 6: Commit transaction
+            db_service.commit()
+            
+            # Step 7: Process with LLM based on file type
+            try:
+                llm_service = LLMService(user.get("user_id"), db_service)
                 
-                # Create document processing request
-                processing_request = DocumentProcessingRequest(
-                    source_id=source_id,
-                    user_id=user.get("user_id"),
-                    document_type="manual_upload",
-                    text_content=attachment.extracted_text,
-                    metadata={
-                        "filename": result["filename"],
-                        "s3_key": result["s3_key"],
-                        "upload_method": "web_upload",
-                        "upload_notes": upload_notes,
-                        "file_hash": file_hash
-                    }
-                )
-                
-                # Process with LLM
-                try:
-                    llm_service = LLMService(user.get("user_id"), db_service)
+                if is_pdf and text_content:
+                    # PDF: Use text-based processing
+                    processing_request = DocumentProcessingRequest(
+                        source_id=source.id,
+                        user_id=user.get("user_id"),
+                        document_type="manual_upload",
+                        text_content=text_content,
+                        metadata={
+                            "filename": upload_result["filename"],
+                            "s3_key": upload_result["s3_key"],
+                            "upload_method": "web_upload",
+                            "upload_notes": upload_notes,
+                            "file_hash": upload_result["file_hash"]
+                        }
+                    )
                     llm_results = llm_service.llm_manual_processing([processing_request])
-                    print(f"LLM processing completed with {len(llm_results)} results")
-                except Exception as llm_error:
-                    print(f"LLM processing failed: {llm_error}")
-                    # Don't fail the upload if LLM processing fails
+                    print(f"LLM PDF processing completed with {len(llm_results)} results")
+                    
+                elif is_image and image_base64:
+                    # Image: Use vision-based processing with base64
+                    processing_request = DocumentProcessingRequest(
+                        source_id=source.id,
+                        user_id=user.get("user_id"),
+                        document_type="manual_upload",
+                        image_base64=image_base64,  # Pass base64 directly
+                        metadata={
+                            "filename": upload_result["filename"],
+                            "s3_key": upload_result["s3_key"],
+                            "upload_method": "web_upload",
+                            "upload_notes": upload_notes,
+                            "file_hash": upload_result["file_hash"],
+                            "mime_type": upload_result["mime_type"]
+                        }
+                    )
+                    llm_results = llm_service.llm_image_processing_batch([processing_request])
+                    print(f"LLM image processing completed with {len(llm_results)} results")
+                    
+            except Exception as llm_error:
+                print(f"LLM processing failed: {llm_error}")
+                # Don't fail the upload if LLM processing fails
             
             # Create structured success response
             success_data = UploadSuccessData(
-                success=result["success"],
-                attachment_id=result["attachment_id"],
-                manual_upload_id=result["manual_upload_id"],
-                filename=result["filename"],
-                s3_key=result["s3_key"],
-                file_size=result["file_size"],
-                document_type=result["document_type"]
+                success=True,
+                attachment_id=attachment.id,
+                manual_upload_id=manual_upload.id,
+                filename=upload_result["filename"],
+                s3_key=upload_result["s3_key"],
+                file_size=upload_result["file_size"],
+                document_type=document_type
             )
             
             success_response = UploadSuccessResponse(
@@ -290,6 +360,8 @@ class FileController:
             )
             
         except Exception as e:
+            # Rollback on any error
+            db_service.db.rollback()
             error_response = UploadErrorResponse(error=f"Upload failed: {str(e)}")
             return JSONResponse(
                 status_code=500, 

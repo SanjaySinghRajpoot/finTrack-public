@@ -412,8 +412,9 @@ class Expense(Base, TimestampMixin, SoftDeleteMixin):
     # Relationships
     user = relationship("User", back_populates="expenses")
     source = relationship("Source", back_populates="expenses")
+
     # Link to ProcessedEmailData through source_id for proper data lineage
-    processed_email_data = relationship(
+    processed_data = relationship(
         "ProcessedEmailData",
         primaryjoin="Expense.source_id == foreign(ProcessedEmailData.source_id)",
         viewonly=True

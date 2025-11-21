@@ -33,6 +33,7 @@ class FeatureKey(str, Enum):
     EXPENSE_CATEGORIZATION = "expense_categorization"
     GMAIL_SYNC = "GMAIL_SYNC"
     GMAIL_SEND = "GMAIL_SEND"
+    FILE_UPLOAD = "FILE_UPLOAD"
     
     # WhatsApp features
     WHATSAPP_SYNC = "WHATSAPP_SYNC"

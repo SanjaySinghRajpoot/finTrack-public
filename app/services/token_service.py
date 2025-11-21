@@ -13,6 +13,7 @@ from app.models.models import Email, EmailConfig, IntegrationStatus, Integration
 from app.services.db_service import DBService
 from app.services.integration_service import IntegrationService
 from app.services.subscription_service import SubscriptionService
+from app.models.integration_schemas import CreditDeductionSchema
 from app.utils.exceptions import (
     NotFoundError,
     ExternalServiceError,
@@ -122,9 +123,9 @@ class TokenService:
             primary_feature_key = f"{provider.upper()}_SYNC"  # e.g., GMAIL_SYNC
             validation = subscription_service.validate_credits_for_feature(user_id, primary_feature_key)
             
-            if not validation["valid"]:
-                raise SubscriptionError(f"Cannot create integration: {validation['message']}", 
-                                      details={"feature": primary_feature_key, "validation": validation})
+            if not validation.valid:
+                raise SubscriptionError(f"Cannot create integration: {validation.message}", 
+                                      details={"feature": primary_feature_key, "validation": validation.model_dump()})
             
             # Create the integration status
             integration = IntegrationStatus(
@@ -143,10 +144,10 @@ class TokenService:
             
             # Deduct credits for initial setup
             try:
-                credit_result = subscription_service.deduct_credits_for_feature(user_id, primary_feature_key)
-                if not credit_result["success"]:
+                credit_result: CreditDeductionSchema = subscription_service.deduct_credits_for_feature(user_id, primary_feature_key)
+                if not credit_result.success:
                     # Log warning but don't fail the integration creation
-                    print(f"Warning: Could not deduct credits for {primary_feature_key}: {credit_result.get('error')}")
+                    print(f"Warning: Could not deduct credits for {primary_feature_key}: {credit_result.error}")
             except Exception as credit_error:
                 print(f"Warning: Credit deduction failed: {credit_error}")
             
@@ -184,13 +185,13 @@ class TokenService:
             primary_feature_key = f"{provider.upper()}_SYNC"
             validation = subscription_service.validate_credits_for_feature(integration.user_id, primary_feature_key)
             
-            if not validation["valid"]:
+            if not validation.valid:
                 # Update integration status to indicate credit issues
                 integration.status = IntegrationState.error
-                integration.error_message = f"Integration paused: {validation['message']}"
+                integration.error_message = f"Integration paused: {validation.message}"
                 self.db.commit()
-                raise SubscriptionError(f"Cannot update integration: {validation['message']}", 
-                                      details={"feature": primary_feature_key, "validation": validation})
+                raise SubscriptionError(f"Cannot update integration: {validation.message}", 
+                                      details={"feature": primary_feature_key, "validation": validation.model_dump()})
             
             # Clear any previous error state
             if integration.status == IntegrationState.error:

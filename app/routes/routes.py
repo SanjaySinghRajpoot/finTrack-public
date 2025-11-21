@@ -108,7 +108,7 @@ def view_pdf(s3_url: str, user=Depends(jwt_middleware), db: Session = Depends(ge
     return FileController.get_attachment_signed_url(s3_url=s3_url, db=db)
 
 @router.post("/upload")
-async def upload_pdf_route(
+async def upload_file_route(
     file: UploadFile = File(...),
     document_type: str = "INVOICE",
     upload_notes: str = None,
@@ -116,4 +116,10 @@ async def upload_pdf_route(
     db: Session = Depends(get_db)
 ):
     """Upload a PDF file and create entries in ManualUpload and Attachment tables."""
-    return await FileController.upload_file(file, user, db, document_type, upload_notes)
+    return await FileController.upload_file(**{
+        "file": file,
+        "user": user,
+        "db": db,
+        "document_type": document_type,
+        "upload_notes": upload_notes
+    })

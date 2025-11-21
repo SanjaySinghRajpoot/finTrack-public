@@ -9,6 +9,7 @@ from requests import Session
 from app.models.models import User
 from app.services.jwt_service import JwtService
 from app.services.subscription_service import SubscriptionService
+from app.models.integration_schemas import SubscriptionCreationSchema
 
 load_dotenv()
 
@@ -81,7 +82,8 @@ def exchange_code_for_tokens(code: str, db: Session):
             # Create starter subscription for new user using SubscriptionService
             subscription_service = SubscriptionService(db)
             try:
-                subscription_service.create_starter_subscription(user.id)
+                subscription_result: SubscriptionCreationSchema = subscription_service.create_starter_subscription(user.id)
+                print(f"Created subscription {subscription_result.subscription_id} for user {user.id}")
             except ValueError as e:
                 # Log the error but don't fail the authentication
                 print(f"Warning: Could not create starter subscription for user {user.id}: {e}")

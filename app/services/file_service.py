@@ -34,7 +34,7 @@ class FileProcessor:
     - Extracts text content (PDFs only)
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf"}
+    SUPPORTED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.webp'}
     DEFAULT_MIME_TYPE = "application/pdf"
 
     def __init__(self, db: DBService, user_id : int, s3_service: Optional[S3Service] = None):
@@ -111,6 +111,141 @@ class FileProcessor:
         else:
             print("attachment already exists, skipping ")
 
+    async def _validate_and_read_file(self, file: UploadFile) -> bytes:
+        """
+        Validate file type and read file data.
+        
+        Args:
+            file: FastAPI UploadFile object
+            
+        Returns:
+            bytes: File data
+            
+        Raises:
+            ProcessingError: If file type is not supported
+        """
+        if not self._is_supported_file(file.filename):
+            raise ProcessingError(
+                f"Unsupported file type: {self._get_file_extension(file.filename)}"
+            )
+        return await file.read()
+
+    def _generate_or_validate_hash(self, file_data: bytes, file_hash: Optional[str] = None) -> str:
+        """
+        Generate file hash if not provided, or validate if provided.
+        
+        Args:
+            file_data: File content as bytes
+            file_hash: Optional pre-computed hash
+            
+        Returns:
+            str: SHA-256 hash of the file
+        """
+        if file_hash:
+            return file_hash
+        return FileHashUtils.generate_file_hash_from_bytes(file_data)
+
+    async def _upload_to_s3(self, file: UploadFile) -> str:
+        """
+        Upload file to S3 and return the S3 key.
+        
+        Args:
+            file: FastAPI UploadFile object
+            
+        Returns:
+            str: S3 key where the file is stored
+        """
+        return await self.s3_service.upload_file(file)
+
+    def _create_manual_upload_entry(self, user_id: int, document_type: str, upload_notes: Optional[str] = None) -> ManualUpload:
+        """
+        Create ManualUpload database entry.
+        
+        Args:
+            user_id: ID of the user
+            document_type: Type of document
+            upload_notes: Optional notes
+            
+        Returns:
+            ManualUpload: Created manual upload object
+        """
+        manual_upload = ManualUpload(
+            user_id=user_id,
+            document_type=DocumentType[document_type.upper()],
+            upload_method="web_upload",
+            upload_notes=upload_notes
+        )
+        self.db_service.add(manual_upload)
+        self.db_service.flush()
+        return manual_upload
+
+    def _get_source_from_manual_upload(self, manual_upload_id: int):
+        """
+        Retrieve the Source created by event handler for a ManualUpload.
+        
+        Args:
+            manual_upload_id: ID of the manual upload
+            
+        Returns:
+            Source: The source object
+            
+        Raises:
+            ProcessingError: If source not found
+        """
+        from app.models.models import Source
+        source = self.db_service.db.query(Source).filter(
+            Source.type == "manual",
+            Source.external_id == str(manual_upload_id)
+        ).first()
+        
+        if not source:
+            raise ProcessingError("Failed to create source for manual upload")
+        
+        return source
+
+    def _create_attachment_entry(
+        self, 
+        source_id: int,
+        user_id: int,
+        filename: str,
+        file_data: bytes,
+        s3_key: str,
+        file_hash: str,
+        mime_type: Optional[str] = None,
+        extracted_text: Optional[str] = None
+    ) -> Attachment:
+        """
+        Create Attachment database entry.
+        
+        Args:
+            source_id: ID of the source
+            user_id: ID of the user
+            filename: Name of the file
+            file_data: File content (for size calculation)
+            s3_key: S3 storage key
+            file_hash: SHA-256 hash of the file
+            mime_type: Optional MIME type
+            extracted_text: Optional extracted text content
+            
+        Returns:
+            Attachment: Created attachment object
+        """
+        attachment = Attachment(
+            source_id=source_id,
+            user_id=user_id,
+            attachment_id=f"manual_{user_id}_{int(datetime.now().timestamp())}",
+            filename=filename,
+            mime_type=mime_type or self.DEFAULT_MIME_TYPE,
+            size=len(file_data),
+            file_hash=file_hash,
+            storage_path=None,
+            s3_url=s3_key,
+            extracted_text=extracted_text
+        )
+        self.db_service.add(attachment)
+        self.db_service.flush()
+        return attachment
+
     async def process_gmail_attachment(
             self,
             attachment_data: dict,
@@ -146,7 +281,7 @@ class FileProcessor:
 
             # Upload to S3
             upload_file = self._create_upload_file(filename, file_data)
-            s3_key = await self.s3_service.upload_pdf(upload_file)
+            s3_key = await self.s3_service.upload_file(upload_file)
 
             # Extract text content
             text_content = self.text_extractor.extract(file_data)
@@ -215,7 +350,7 @@ class FileProcessor:
             file_data = await file.read()
             
             # Upload to S3
-            s3_key = await self.s3_service.upload_pdf(file)
+            s3_key = await self.s3_service.upload_file(file)
             
             # Extract text content
             text_content = self.text_extractor.extract(file_data)
@@ -281,99 +416,64 @@ class FileProcessor:
             self.logger.exception(f"Unexpected error processing {file.filename}")
             raise ProcessingError(f"Upload failed: {str(e)}")
 
-    async def upload_file_with_hash(self, file: UploadFile, user_id: int, document_type: str = "INVOICE", upload_notes: str = None, file_hash: str = None):
+    async def upload_file_with_hash(self, file: UploadFile, file_hash: Optional[str] = None) -> dict:
         """
-        Upload a file manually with hash storage for duplicate detection.
+        Upload a file with hash generation - only handles file validation, hashing, and S3 upload.
+        Database operations should be handled by the caller.
         
         Args:
             file: FastAPI UploadFile object
-            user_id: ID of the user uploading the file
-            document_type: Type of document being uploaded
-            upload_notes: Optional notes about the upload
-            file_hash: SHA-256 hash of the file content
+            file_hash: Optional pre-computed SHA-256 hash of the file content
             
         Returns:
-            dict: Upload result with attachment and manual upload info
+            dict: Upload result with file_hash, s3_key, file_data, and file_size
+            
+        Raises:
+            ProcessingError: If validation or upload fails
         """
         try:
-            # Validate file type
-            if not self._is_supported_file(file.filename):
-                raise ProcessingError(
-                    f"Unsupported file type: {self._get_file_extension(file.filename)}"
-                )
-
-            # Read file data
-            file_data = await file.read()
+            # Step 1: Validate and read file
+            file_data = await self._validate_and_read_file(file)
             
-            # Generate hash if not provided
-            if not file_hash:
-                file_hash = FileHashUtils.generate_file_hash_from_bytes(file_data)
+            # Step 2: Generate or validate file hash
+            file_hash = self._generate_or_validate_hash(file_data, file_hash)
             
-            # Upload to S3
-            s3_key = await self.s3_service.upload_pdf(file)
-            
-            # Extract text content
-            text_content = self.text_extractor.extract(file_data)
-            
-            # First create ManualUpload entry (this will trigger the event handler to create Source)
-            manual_upload = ManualUpload(
-                user_id=user_id,
-                document_type=DocumentType[document_type.upper()],
-                upload_method="web_upload",
-                upload_notes=upload_notes
-            )
-            self.db_service.add(manual_upload)
-            self.db_service.flush()  # This triggers the event handler to create Source
-            
-            # Get the created source from the event handler
-            # The event handler creates a Source with type=manual and external_id=manual_upload.id
-            from app.models.models import Source
-            source = self.db_service.db.query(Source).filter(
-                Source.type == "manual",
-                Source.external_id == str(manual_upload.id)
-            ).first()
-            
-            if not source:
-                raise ProcessingError("Failed to create source for manual upload")
-            
-            # Now create the Attachment with the source_id and file hash
-            attachment = Attachment(
-                source_id=source.id,
-                user_id=user_id,
-                attachment_id=f"manual_{user_id}_{int(datetime.now().timestamp())}",
-                filename=file.filename,
-                mime_type=file.content_type or self.DEFAULT_MIME_TYPE,
-                size=len(file_data),
-                file_hash=file_hash,  # Store the file hash
-                storage_path=None,  # Using S3
-                s3_url=s3_key,
-                extracted_text=text_content
-            )
-            self.db_service.add(attachment)
-            self.db_service.flush()  # Get the attachment ID
-            
-            self.db_service.commit()
+            # Step 3: Upload to S3
+            s3_key = await self._upload_to_s3(file)
 
             self.logger.info(
-                f"Successfully uploaded file with hash: {file.filename} (size: {len(file_data)} bytes, hash: {file_hash[:16]}...) for user {user_id}"
+                f"Successfully uploaded file to S3: {file.filename} "
+                f"(size: {len(file_data)} bytes, hash: {file_hash[:16]}...)"
             )
             
             return {
-                "success": True,
-                "attachment_id": attachment.id,
-                "manual_upload_id": manual_upload.id,
-                "filename": file.filename,
+                "file_hash": file_hash,
                 "s3_key": s3_key,
+                "file_data": file_data,
                 "file_size": len(file_data),
-                "document_type": document_type,
-                "file_hash": file_hash
+                "filename": file.filename,
+                "mime_type": file.content_type or self.DEFAULT_MIME_TYPE
             }
             
         except ProcessingError as e:
-            self.db_service.db.rollback()
             self.logger.error(f"Processing error for {file.filename}: {e}")
             raise e
         except Exception as e:
-            self.db_service.db.rollback()
             self.logger.exception(f"Unexpected error processing {file.filename}")
             raise ProcessingError(f"Upload failed: {str(e)}")
+    
+    def extract_text(self, file_data: bytes) -> Optional[str]:
+        """
+        Extract text content from file data.
+        
+        Args:
+            file_data: File content as bytes
+            
+        Returns:
+            Optional[str]: Extracted text content or None
+        """
+        try:
+            return self.text_extractor.extract(file_data)
+        except Exception as e:
+            self.logger.warning(f"Text extraction failed: {e}")
+            return None

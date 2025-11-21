@@ -81,9 +81,13 @@ export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
     setSelectedFile(file);
     
     if (file) {
-      // Validate file type
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        toast.error("Only PDF files are supported");
+      // Validate file type - support both PDFs and images
+      const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      const fileExtension = file.name.toLowerCase();
+      const isValidExtension = /\.(pdf|jpe?g|png|webp)$/i.test(fileExtension);
+      
+      if (!allowedTypes.includes(file.type) && !isValidExtension) {
+        toast.error("Only PDF and image files (JPG, PNG, WEBP) are supported");
         setSelectedFile(null);
         event.target.value = '';
         return;
@@ -159,12 +163,12 @@ export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
             {/* File Upload */}
             <div className="space-y-2">
-              <Label htmlFor="file">PDF File</Label>
+              <Label htmlFor="file">PDF or Image File</Label>
               <div className="flex items-center gap-2">
                 <Input
                   id="file"
                   type="file"
-                  accept=".pdf"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
                   onChange={handleFileChange}
                   disabled={uploadMutation.isPending}
                   className="flex-1"

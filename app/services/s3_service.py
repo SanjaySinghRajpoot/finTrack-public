@@ -38,14 +38,44 @@ class S3Service:
         except ClientError as e:
             raise HTTPException(status_code=500, detail=f"Error generating pre-signed URL: {e}")
 
-    async def upload_pdf(self, file: UploadFile, folder: Optional[str] = "attachments") -> str:
+    async def upload_file(self, file: UploadFile, folder: Optional[str] = "attachments") -> str:
         """
-        Upload a PDF file to the S3 bucket and return its file key.
+        Upload a PDF or image file to the S3 bucket and return its file key.
+        
+        Supported formats: PDF, JPEG, JPG, PNG, GIF, WEBP
         """
         try:
-            if not file.filename.lower().endswith(".pdf"):
-                raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-
+            # Validate file type
+            allowed_content_types = {
+                "application/pdf": "application/pdf",
+                "image/jpeg": "image/jpeg",
+                "image/jpg": "image/jpeg",
+                "image/png": "image/png",
+                "image/gif": "image/gif",
+                "image/webp": "image/webp"
+            }
+            
+            content_type = file.content_type.lower() if file.content_type else ""
+            
+            # Also check by file extension if content_type is not available
+            if content_type not in allowed_content_types:
+                file_ext = file.filename.lower().split('.')[-1] if file.filename else ""
+                ext_to_content_type = {
+                    "pdf": "application/pdf",
+                    "jpg": "image/jpeg",
+                    "jpeg": "image/jpeg",
+                    "png": "image/png",
+                    "gif": "image/gif",
+                    "webp": "image/webp"
+                }
+                content_type = ext_to_content_type.get(file_ext, "")
+            
+            if content_type not in allowed_content_types:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid file type. Only PDF and images (JPEG, PNG, GIF, WEBP) are allowed."
+                )
+            
             timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             file_key = f"{folder}/{timestamp}_{file.filename}"
 
@@ -60,7 +90,7 @@ class S3Service:
                     self.bucket_name,
                     file_key,
                     ExtraArgs={
-                        "ContentType": "application/pdf",
+                        "ContentType": allowed_content_types[content_type],
                         "ACL": "private",  # or "public-read" if needed
                     },
                 )

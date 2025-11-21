@@ -52,6 +52,10 @@ export interface Expense {
   amount: number;
   category: string;
   created_at: string;
+  source_id: number | null;
+  updated_at: string | null;
+  deleted_at: string | null;
+  processed_data?: ImportedExpense[];
 }
 
 export interface CreateExpenseRequest {

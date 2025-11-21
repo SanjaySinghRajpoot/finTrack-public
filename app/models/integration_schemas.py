@@ -156,3 +156,118 @@ class IntegrationDefinition(BaseModel):
     display_order: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ================================================================================================
+# SUBSCRIPTION SCHEMAS
+# ================================================================================================
+
+class SubscriptionDetailSchema(BaseModel):
+    """Schema for subscription details"""
+    has_subscription: bool
+    credit_balance: int
+    plan_name: Optional[str] = None
+    plan_slug: Optional[str] = None
+    subscription_status: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    auto_renewal: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditValidationSchema(BaseModel):
+    """Schema for credit validation results"""
+    valid: bool
+    error_code: Optional[str] = None
+    message: str
+    current_credits: int
+    required_credits: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditDeductionSchema(BaseModel):
+    """Schema for credit deduction results"""
+    success: bool
+    message: str
+    error: Optional[str] = None
+    error_code: Optional[str] = None
+    credits_deducted: int
+    remaining_credits: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FeatureAvailabilityDetailSchema(BaseModel):
+    """Schema for feature availability with details"""
+    display_name: str
+    description: str
+    credit_cost: int
+    can_use: bool
+    category: str
+    reason: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AllFeaturesAvailabilitySchema(BaseModel):
+    """Schema for all features availability"""
+    features: Dict[str, FeatureAvailabilityDetailSchema]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FeatureAccessDetailSchema(BaseModel):
+    """Schema for specific feature access details"""
+    feature_key: str
+    display_name: str
+    description: str
+    credit_cost: int
+    category: str
+    current_balance: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FeatureAccessCheckSchema(BaseModel):
+    """Schema for feature access check results"""
+    can_use: bool
+    message: str
+    feature_details: Optional[FeatureAccessDetailSchema] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CreditSummarySchema(BaseModel):
+    """Schema for credit usage summary"""
+    current_balance: int
+    total_allocated: int
+    credits_used: int
+    usage_percentage: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionCreationSchema(BaseModel):
+    """Schema for newly created subscription"""
+    subscription_id: int
+    user_id: int
+    plan_id: int
+    plan_name: str
+    status: str
+    starts_at: datetime
+    expires_at: datetime
+    credit_balance: int
+    total_credits_allocated: int
+    auto_renewal: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionUpdateSchema(BaseModel):
+    """Schema for subscription status update"""
+    subscription_id: int
+    status: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

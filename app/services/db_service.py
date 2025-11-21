@@ -214,6 +214,10 @@ class DBService:
         try:
             query = (
                 self.db.query(Expense)
+                .options(
+                    joinedload(Expense.processed_data).joinedload(ProcessedEmailData.attachment),
+                    joinedload(Expense.processed_data).selectinload(ProcessedEmailData.processed_items)
+                )
                 .filter(
                     Expense.user_id == user_id,
                     Expense.deleted_at.is_(None)
@@ -505,6 +509,22 @@ class DBService:
             else:
                 return False, f"Insufficient credits. Required: {credit_cost}, Available: {subscription.credit_balance}"
 
+        except Exception as e:
+            raise e
+
+    def get_feature_by_key(self, feature_key: str):
+        """
+        Get feature by its key.
+        """
+        try:
+            return (
+                self.db.query(Feature)
+                .filter(
+                    Feature.feature_key == feature_key,
+                    Feature.is_active == True
+                )
+                .first()
+            )
         except Exception as e:
             raise e
 

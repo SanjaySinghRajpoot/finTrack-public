@@ -1,4 +1,4 @@
-import { Plane, Coffee, Home, ShoppingBag, Car, Utensils, Heart, Gamepad2, Briefcase, Smartphone, GraduationCap, DollarSign } from "lucide-react";
+import { Plane, Coffee, Home, ShoppingBag, Car, Utensils, Heart, Gamepad2, Briefcase, Smartphone, GraduationCap, Wallet } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
 export interface CategoryConfig {
@@ -77,7 +77,7 @@ export const categories: Record<string, CategoryConfig> = {
   },
   Other: {
     name: "Other",
-    icon: DollarSign,
+    icon: Wallet,
     color: "hsl(215 16% 47%)",
     bgColor: "hsl(215 16% 95%)",
   },
