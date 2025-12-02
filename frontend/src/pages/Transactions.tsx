@@ -521,7 +521,7 @@ const Transactions = () => {
                                     size="icon"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      deleteMutation.mutate((item as Expense).id);
+                                      deleteMutation.mutate((item as Expense).uuid);
                                     }}
                                     className="h-8 w-8 hover:bg-destructive/10 text-destructive transition-colors"
                                     title="Delete"

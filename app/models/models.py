@@ -108,23 +108,6 @@ class User(Base, TimestampMixin):
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
 
-class UserToken(Base, TimestampMixin):
-    """OAuth tokens for user authentication"""
-    __tablename__ = "user_tokens"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    provider = Column(String(50), nullable=False, default="google")
-    access_token = Column(Text, nullable=False)
-    refresh_token = Column(Text, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-
-    # Relationships
-    user = relationship("User")
-
-    def __repr__(self):
-        return f"<UserToken(id={self.id}, user_id={self.user_id}, provider={self.provider})>"
-
 # ================================================================================================
 # SOURCE TRACKING MODELS
 # ================================================================================================

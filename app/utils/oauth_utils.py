@@ -3,6 +3,8 @@ import urllib.parse
 from fastapi import Request
 import os
 from dotenv import load_dotenv
+from typing import Optional, List
+import httpx
 
 from requests import Session
 
@@ -10,97 +12,135 @@ from app.models.models import User
 from app.services.jwt_service import JwtService
 from app.services.subscription_service import SubscriptionService
 from app.models.integration_schemas import SubscriptionCreationSchema
+from app.utils.exceptions import AuthenticationError
 
 load_dotenv()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = "http://localhost:8000/api/emails/oauth2callback"
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+REDIRECT_URI = f"{os.getenv('HOST_URL')}/api/emails/oauth2callback"
+
+# Gmail Integration OAuth (separate from login)
+GMAIL_INTEGRATION_REDIRECT_URI = f"{os.getenv('HOST_URL')}/api/integration/gmail/callback"
+
+LOGIN_SCOPES = [
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile"
+]
+
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly", 
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile"
 ]
 
 AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
-def generate_auth_url():
+def generate_auth_url(scopes: Optional[List[str]] = None) -> str:
+    """Generate auth URL for login flow"""
+    # Validate required environment variables
+    if not GOOGLE_CLIENT_ID:
+        raise ValueError("GOOGLE_CLIENT_ID environment variable is required")
+    if not REDIRECT_URI or "None" in REDIRECT_URI:
+        raise ValueError("HOST_URL environment variable is required for REDIRECT_URI")
+    
+    # Use provided scopes or fallback to default
+    url_scopes = " ".join(scopes or LOGIN_SCOPES)
+    
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": " ".join(SCOPES),
-        "access_type": "offline",  # so we also get refresh_token
-        "prompt": "consent"
+        "scope": url_scopes,
+        "access_type": "offline",  # Request refresh token
+        "prompt": "consent"  # Force consent screen for refresh token
     }
+    
     return f"{AUTH_BASE_URL}?{urllib.parse.urlencode(params)}"
 
+def generate_gmail_integration_auth_url() -> str:
+    """Generate auth URL specifically for Gmail integration flow"""
+    # Validate required environment variables
+    if not GOOGLE_CLIENT_ID:
+        raise ValueError("GOOGLE_CLIENT_ID environment variable is required")
+    if not GMAIL_INTEGRATION_REDIRECT_URI or "None" in GMAIL_INTEGRATION_REDIRECT_URI:
+        raise ValueError("HOST_URL environment variable is required for GMAIL_INTEGRATION_REDIRECT_URI")
+    
+    # Use Gmail-specific scopes
+    url_scopes = " ".join(GMAIL_SCOPES)
+    
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GMAIL_INTEGRATION_REDIRECT_URI,
+        "response_type": "code",
+        "scope": url_scopes,
+        "access_type": "offline",  # Request refresh token
+        "prompt": "consent",  # Force consent screen for refresh token
+    }
+    
+    return f"{AUTH_BASE_URL}?{urllib.parse.urlencode(params)}"
 
-def exchange_code_for_tokens(code: str, db: Session):
+def generate_gmail_integration_auth_url_with_state(user_id: int) -> str:
+    """Generate auth URL with user_id encoded in state parameter"""
+    import json
+    import base64
+    
+    # Validate required environment variables
+    if not GOOGLE_CLIENT_ID:
+        raise ValueError("GOOGLE_CLIENT_ID environment variable is required")
+    if not GMAIL_INTEGRATION_REDIRECT_URI or "None" in GMAIL_INTEGRATION_REDIRECT_URI:
+        raise ValueError("HOST_URL environment variable is required for GMAIL_INTEGRATION_REDIRECT_URI")
+    
+    # Use Gmail-specific scopes
+    url_scopes = " ".join(GMAIL_SCOPES)
+    
+    # Encode user_id in state parameter
+    state_data = {"user_id": user_id, "flow": "gmail_integration"}
+    state_json = json.dumps(state_data)
+    state_encoded = base64.urlsafe_b64encode(state_json.encode()).decode()
+    
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GMAIL_INTEGRATION_REDIRECT_URI,
+        "response_type": "code",
+        "scope": url_scopes,
+        "access_type": "offline",  # Request refresh token
+        "prompt": "consent",  # Force consent screen for refresh token
+        "state": state_encoded  # Encode user_id in state
+    }
+    
+    return f"{AUTH_BASE_URL}?{urllib.parse.urlencode(params)}"
+
+def decode_oauth_state(state: str) -> dict:
+    """Decode the state parameter to extract user_id"""
+    import json
+    import base64
+    
     try:
-        data = {
-            "code": code,
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri":  [
-            "http://localhost:8000/auth/callback",
-            "http://localhost:8000/api/emails/oauth2callback"
-        ],
-            "grant_type": "authorization_code"
-        }
-        resp = requests.post(TOKEN_URL, data=data)
-        resp.raise_for_status()
-        token_data = resp.json()
-
-        # Step 1: Get user info from Google
-        user_info_resp = requests.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {token_data['access_token']}"}
-        )
-        user_info_resp.raise_for_status()
-        user_info = user_info_resp.json()
-        email = user_info.get("email")
-
-        if not email:
-            raise ValueError("No email returned from Google")
-
-        # Step 2: Check if user exists in DB, else create
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            user = User(
-                email=email, 
-                first_name=user_info.get("name"), 
-                profile_image=user_info.get("picture"), 
-                locale="hi", 
-                country="India"
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-
-            # Create starter subscription for new user using SubscriptionService
-            subscription_service = SubscriptionService(db)
-            try:
-                subscription_result: SubscriptionCreationSchema = subscription_service.create_starter_subscription(user.id)
-                print(f"Created subscription {subscription_result.subscription_id} for user {user.id}")
-            except ValueError as e:
-                # Log the error but don't fail the authentication
-                print(f"Warning: Could not create starter subscription for user {user.id}: {e}")
-
-        # Step 3: Create JWT token
-        jwt_service = JwtService()
-        jwt_token = jwt_service.create_token(user.id, user.email)
-
-        return {
-            "jwt": jwt_token,
-            "google_access_token": token_data.get('access_token'),
-            "google_refresh_token": token_data.get('refresh_token'),
-            "expires_in": token_data.get("expires_in"),
-            "user": {"id": user.id, "email": user.email}
-        }
-
-    except requests.HTTPError as e:
-        raise RuntimeError(f"Google API request failed: {e}")
+        state_json = base64.urlsafe_b64decode(state.encode()).decode()
+        return json.loads(state_json)
     except Exception as e:
-        raise RuntimeError(f"Error during auth flow: {str(e)}")
+        raise ValueError(f"Invalid state parameter: {str(e)}")
+
+async def get_google_user_info(access_token: str) -> dict:
+    """
+    Fetch user details from Google OAuth userinfo endpoint.
+    Returns the full user info dict (email, name, picture, etc).
+    Raises AuthenticationError if email is missing or request fails.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            user_info = response.json()
+            if not user_info.get("email"):
+                raise AuthenticationError("No email returned from Google")
+            return user_info
+    except httpx.RequestError as e:
+        raise AuthenticationError(f"Failed to fetch Google user info: {str(e)}")

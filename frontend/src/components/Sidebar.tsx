@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Home, Receipt, Settings, User, LogOut, Menu } from "lucide-react";
+import { Home, Receipt, Settings, User, LogOut, Menu, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
@@ -59,16 +59,18 @@ export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
       >
         <div className="h-16 flex items-center justify-center border-b border-border px-4">
           {!collapsed && (
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-sm">
-                <span className="text-primary-foreground font-bold text-lg">FT</span>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
               </div>
-              <h1 className="text-xl font-bold text-primary">FinTrack</h1>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                FinTrack
+              </h1>
             </div>
           )}
           {collapsed && !isMobile && (
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-sm">
-              <span className="text-primary-foreground font-bold text-lg">FT</span>
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md">
+              <Sparkles className="h-5 w-5 text-primary-foreground" />
             </div>
           )}
         </div>

@@ -11,7 +11,7 @@ from app.services.s3_service import S3Service
 from app.services.token_service import TokenService
 from app.services.db_service import DBService
 from app.services.user_service import UserService
-from app.utils.oauth_utils import generate_auth_url, exchange_code_for_tokens
+from app.utils.oauth_utils import generate_auth_url
 from app.services.gmail_service import GmailClient
 from app.models.scheme import ExpenseCreate, ExpenseUpdate
 from app.utils.exceptions import (
@@ -29,36 +29,41 @@ from app.utils.decorators import deduct_credits
 load_dotenv()
 
 VITE_API_BASE_URL = os.getenv("VITE_API_BASE_URL")
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 
 class AuthController:
     @staticmethod
-    def login():
+    async def login():
         url = generate_auth_url()
         return {"auth_url": url}
 
     @staticmethod
-    def oauth2callback(request, code, db):
+    async def oauth2callback(request, code, db):
         try:
-            tokens = exchange_code_for_tokens(code, db)
-
             token_service = TokenService(db)
-            token_service.save_gmail_token(
-                tokens.get("user").get("id"),
-                tokens.get("user").get("email"),
-                tokens.get("google_access_token"),
-                tokens.get("google_refresh_token"),
-                tokens.get("expires_in")
-            )
+            tokens = await token_service.exchange_code_for_tokens(code)
 
-            response = RedirectResponse(url= VITE_API_BASE_URL or "http://localhost:8080/")
+            response = RedirectResponse(url=FRONTEND_URL or "http://localhost")
+
+            # Determine if we're in production (HTTPS) or local (HTTP)
+            is_production = FRONTEND_URL and FRONTEND_URL.startswith("https://")
+            
+            # Extract domain from FRONTEND_URL
+            domain = None
+            if FRONTEND_URL:
+                # Extract domain from URL (e.g., "https://15.206.194.238.nip.io" -> "15.206.194.238.nip.io")
+                from urllib.parse import urlparse
+                parsed_url = urlparse(FRONTEND_URL)
+                domain = parsed_url.hostname
 
             # Set cookies securely
             response.set_cookie(
                 key="expense_tracker_jwt",
                 value=tokens.get("jwt"),
+                domain=domain if domain else None,  # Use extracted domain or None for localhost
                 httponly=False,
-                secure=True,
+                secure=is_production,  # True for HTTPS, False for HTTP
                 samesite="Lax",
                 max_age=tokens.get("expires_in")
             )
@@ -85,7 +90,7 @@ class EmailController:
 
 class ProcessedDataController:
     @staticmethod
-    def get_payment_info(user, db, limit: int, offset: int):
+    async def get_payment_info(user, db, limit: int, offset: int):
         user_id = user.get("user_id")
         db_service = DBService(db)
         return db_service.get_processed_data(user_id=user_id, limit=limit, offset=offset)
@@ -93,7 +98,7 @@ class ProcessedDataController:
 
 class ExpenseController:
     @staticmethod
-    def create_expense(payload: ExpenseCreate, user, db):
+    async def create_expense(payload: ExpenseCreate, user, db):
         try:
             db_service = DBService(db)
             expense = Expense(
@@ -107,7 +112,7 @@ class ExpenseController:
             if payload.is_import:
                 # Get the processed data to extract source_id
                 processed_data = db_service.get_processed_data_by_id(payload.processed_data_id)
-                if processed_data:
+                if (processed_data):
                     expense.source_id = processed_data.source_id
                 
                 db_service.import_processed_data(payload.processed_data_id)
@@ -117,7 +122,7 @@ class ExpenseController:
             raise DatabaseError(f"Failed to create expense: {str(e)}")
 
     @staticmethod
-    def list_expenses(user, db, limit: int, offset: int):
+    async def list_expenses(user, db, limit: int, offset: int):
         try:
             db_service = DBService(db)
             return db_service.list_expenses(user.get("user_id"), limit, offset)
@@ -125,12 +130,12 @@ class ExpenseController:
             raise DatabaseError(f"Failed to retrieve expenses: {str(e)}")
 
     @staticmethod
-    def get_expense(expense_id: int, user, db):
+    async def get_expense(expense_uuid: str, user, db):
         try:
             db_service = DBService(db)
-            expense = db_service.get_expense(expense_id, user.get("user_id"))
+            expense = db_service.get_expense(expense_uuid, user.get("user_id"))
             if not expense:
-                raise NotFoundError("Expense", str(expense_id))
+                raise NotFoundError("Expense", str(expense_uuid))
             return expense
         except NotFoundError:
             raise
@@ -138,12 +143,12 @@ class ExpenseController:
             raise DatabaseError(f"Failed to retrieve expense: {str(e)}")
 
     @staticmethod
-    def update_expense(expense_id: int, payload: ExpenseUpdate, user, db):
+    async def update_expense(expense_uuid: str, payload: ExpenseUpdate, user, db):
         try:
             db_service = DBService(db)
-            expense = db_service.get_expense(expense_id, user.get("user_id"))
+            expense = db_service.get_expense(expense_uuid, user.get("user_id"))
             if not expense:
-                raise NotFoundError("Expense", str(expense_id))
+                raise NotFoundError("Expense", str(expense_uuid))
 
             return db_service.update_expense(expense, payload.to_dict())
         except NotFoundError:
@@ -152,22 +157,26 @@ class ExpenseController:
             raise DatabaseError(f"Failed to update expense: {str(e)}")
 
     @staticmethod
-    def delete_expense(expense_id: int, user, db):
+    async def delete_expense(expense_uuid: str, user, db):
         try:
             db_service = DBService(db)
-            expense = db_service.get_expense(expense_id, user.get("user_id"))
+            expense = db_service.get_expense(expense_uuid, user.get("user_id"))
             if not expense:
-                raise NotFoundError("Expense", str(expense_id))
+                raise NotFoundError("Expense", str(expense_uuid))
             return db_service.soft_delete_expense(expense)
         except NotFoundError:
             raise
+        except DatabaseError:
+            # Re-raise database errors as they already have clean messages
+            raise
         except Exception as e:
-            raise DatabaseError(f"Failed to delete expense: {str(e)}")
+            raise DatabaseError("Failed to delete expense")
+
 
 class FileController:
 
     @staticmethod
-    def get_attachment(email_id: int, db):
+    async def get_attachment(email_id: int, db):
         try:
             db_service = DBService(db)
             # Get attachments by email_id (which internally finds source_id)
@@ -218,7 +227,7 @@ class FileController:
             # Validate file size (e.g., max 10MB)
             MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
             file_content = await file.read()
-            if len(file_content) > MAX_FILE_SIZE:
+            if (len(file_content) > MAX_FILE_SIZE):
                 error_response = UploadErrorResponse(error="File size exceeds 10MB limit")
                 return JSONResponse(
                     status_code=400,
@@ -369,10 +378,10 @@ class FileController:
             )
 
     @staticmethod
-    def get_attachment_signed_url(s3_url: str, db):
+    async def get_attachment_signed_url(s3_url: str, db):
         try:
             s3 = S3Service()
-            signed_url = s3.get_presigned_url(s3_url)
+            signed_url = await s3.get_presigned_url(s3_url)
 
             return {
                 "url": signed_url
@@ -412,15 +421,127 @@ class UserController:
     @staticmethod
     async def get_user_settings(user: dict, db):
         try:
-            user_service = UserService()
+            user_service = UserService(db)
             return await user_service.get_user_settings(user, db)
         except Exception as e:
             raise DatabaseError(f"Failed to retrieve user settings: {str(e)}")
 
 
-
-
-
-
-
+class IntegrationController:
+    """
+    Controller for managing integrations (Gmail, WhatsApp, etc.)
+    """
+    
+    @staticmethod
+    async def link_integration(slug: str, user: dict, db):
+        """
+        Initiate integration linking based on slug.
+        
+        Args:
+            slug: Integration identifier (e.g., 'gmail', 'whatsapp')
+            user: Authenticated user
+            db: Database session
+            
+        Returns:
+            Integration-specific response (e.g., OAuth URL for Gmail)
+        """
+        try:
+            # Route to appropriate integration handler based on slug
+            if slug == "gmail":
+                from app.services.integration.gmail_integration import GmailIntegrationService
+                gmail_service = GmailIntegrationService(db)
+                return await gmail_service.link_integration(user)
+            else:
+                raise NotFoundError("Integration", slug, 
+                                  details={"message": f"Integration '{slug}' not supported"})
+                
+        except NotFoundError:
+            raise
+        except Exception as e:
+            raise BusinessLogicError(f"Failed to initiate {slug} integration", 
+                                   details={"error": str(e)})
+    
+    @staticmethod
+    async def oauth_callback(slug: str, code: str, state: str, db):
+        """
+        Handle OAuth callback for integration (public endpoint).
+        Extracts user_id from state parameter and redirects to frontend.
+        
+        Args:
+            slug: Integration identifier (e.g., 'gmail')
+            code: Authorization code from OAuth provider
+            state: State parameter containing encoded user_id
+            db: Database session
+            
+        Returns:
+            Redirect to frontend with success/error status
+        """
+        try:
+            from app.utils.oauth_utils import decode_oauth_state
+            from fastapi.responses import RedirectResponse
+            
+            # Decode state to get user_id
+            if not state:
+                raise AuthenticationError("Missing state parameter in OAuth callback")
+            
+            state_data = decode_oauth_state(state)
+            user_id = state_data.get("user_id")
+            
+            if not user_id:
+                raise AuthenticationError("Invalid state parameter - missing user_id")
+            
+            # Create user dict for service methods
+            user = {"user_id": user_id}
+            
+            # Route to appropriate integration handler based on slug
+            if slug == "gmail":
+                from app.services.integration.gmail_integration import GmailIntegrationService
+                gmail_service = GmailIntegrationService(db)
+                result = await gmail_service.oauth_callback(code, user)
+                
+                # Redirect to frontend settings page with success message
+                redirect_url = f"{FRONTEND_URL}/settings?integration=gmail&status=success"
+                return RedirectResponse(url=redirect_url)
+            else:
+                raise NotFoundError("Integration", slug,
+                                  details={"message": f"Integration '{slug}' not supported"})
+                
+        except (NotFoundError, AuthenticationError, DatabaseError) as e:
+            # Redirect to frontend with error
+            error_msg = str(e)
+            redirect_url = f"{FRONTEND_URL}/settings?integration={slug}&status=error&message={error_msg}"
+            return RedirectResponse(url=redirect_url)
+        except Exception as e:
+            # Redirect to frontend with generic error
+            redirect_url = f"{FRONTEND_URL}/settings?integration={slug}&status=error&message=Failed to complete integration"
+            return RedirectResponse(url=redirect_url)
+    
+    @staticmethod
+    async def delink_integration(slug: str, user: dict, db):
+        """
+        Delink/disconnect an integration.
+        
+        Args:
+            slug: Integration identifier (e.g., 'gmail')
+            user: Authenticated user
+            db: Database session
+            
+        Returns:
+            Success message
+        """
+        try:
+            # Route to appropriate integration handler based on slug
+            if slug == "gmail":
+                from app.services.integration.gmail_integration import GmailIntegrationService
+                gmail_service = GmailIntegrationService(db)
+                return await gmail_service.delink_integration(user)
+            else:
+                raise NotFoundError("Integration", slug,
+                                  details={"message": f"Integration '{slug}' not supported"})
+                
+        except NotFoundError:
+            raise
+        except Exception as e:
+            raise DatabaseError(f"Failed to delink {slug} integration",
+                              details={"error": str(e)})
 

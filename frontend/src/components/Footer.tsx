@@ -1,4 +1,4 @@
-import { Heart, Github, Twitter } from "lucide-react";
+import { Heart, Github, Twitter, Wallet } from "lucide-react";
 
 export const Footer = () => {
   const currentYear = new Date().getFullYear();
@@ -9,8 +9,8 @@ export const Footer = () => {
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Left side - Branding */}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">FT</span>
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md">
+              <Wallet className="h-4 w-4 text-primary-foreground" />
             </div>
             <div className="text-sm">
               <span className="font-semibold text-foreground">FinTrack</span>

@@ -6,7 +6,7 @@ from app.middleware.auth_middleware import jwt_middleware
 from app.models.scheme import TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Query
 from app.controller.controller import EmailController, ProcessedDataController, AuthController, ExpenseController, \
-    FileController, UserController
+    FileController, UserController, IntegrationController
 from app.services.s3_service import S3Service
 
 router = APIRouter()
@@ -20,13 +20,13 @@ def get_db():
 
 # ----------- AUTH ROUTES -----------
 @router.get("/login")
-def login():
-    return AuthController.login()
+async def login():
+    return await AuthController.login()
 
 
 @router.get("/emails/oauth2callback")
-def oauth2callback(request: Request, code: str, db: Session = Depends(get_db)):
-    return AuthController.oauth2callback(request, code, db)
+async def oauth2callback(request: Request, code: str, db: Session = Depends(get_db)):
+    return await AuthController.oauth2callback(request, code, db)
 
 
 # ----------- EMAIL ROUTES -----------
@@ -67,45 +67,45 @@ async def get_user(
 
 # ----------- Processed Data ROUTES -----------
 @router.get("/processed-expense/info")
-def get_payment_info(user=Depends(jwt_middleware),
+async def get_payment_info(user=Depends(jwt_middleware),
                      db: Session = Depends(get_db),
                      limit: int = Query(10, ge=1, le=100, description="Number of records per page"),
                      offset: int = Query(0, ge=0, description="Number of records to skip"),
                      ):
-    return ProcessedDataController.get_payment_info(user, db, limit, offset)
+    return await ProcessedDataController.get_payment_info(user, db, limit, offset)
 
 
 # ----------- EXPENSE ROUTES -----------
 @router.post("/expense")
-def create_expense(payload: ExpenseCreate, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return ExpenseController.create_expense(payload, user, db)
+async def create_expense(payload: ExpenseCreate, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return await ExpenseController.create_expense(payload, user, db)
 
 @router.get("/expense")
-def list_expenses(user=Depends(jwt_middleware),
+async def list_expenses(user=Depends(jwt_middleware),
                   db: Session = Depends(get_db),
                   limit: int = Query(10, ge=1, le=100, description="Number of records per page"),
                   offset: int = Query(0, ge=0, description="Number of records to skip")):
-    return ExpenseController.list_expenses(user, db, limit, offset)
+    return await ExpenseController.list_expenses(user, db, limit, offset)
 
 
-@router.get("/expense/{expense_id}")
-def get_expense(expense_id: int, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return ExpenseController.get_expense(expense_id, user, db)
+@router.get("/expense/{expense_uuid}")
+async def get_expense(expense_uuid: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return await ExpenseController.get_expense(expense_uuid, user, db)
 
 
-@router.put("/expense/{expense_id}")
-def update_expense(expense_id: int, payload: ExpenseUpdate, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return ExpenseController.update_expense(expense_id, payload, user, db)
+@router.put("/expense/{expense_uuid}")
+async def update_expense(expense_uuid: str, payload: ExpenseUpdate, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return await ExpenseController.update_expense(expense_uuid, payload, user, db)
 
 
-@router.delete("/expense/{expense_id}")
-def delete_expense(expense_id: int, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return ExpenseController.delete_expense(expense_id, user, db)
+@router.delete("/expense/{expense_uuid}")
+async def delete_expense(expense_uuid: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return await ExpenseController.delete_expense(expense_uuid, user, db)
 
 # -------- S3 ROUTES ---------------
 @router.get("/attachment/view")
-def view_pdf(s3_url: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
-    return FileController.get_attachment_signed_url(s3_url=s3_url, db=db)
+async def view_pdf(s3_url: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
+    return await FileController.get_attachment_signed_url(s3_url=s3_url, db=db)
 
 @router.post("/upload")
 async def upload_file_route(
@@ -123,3 +123,44 @@ async def upload_file_route(
         "document_type": document_type,
         "upload_notes": upload_notes
     })
+
+
+# -------- INTEGRATION ROUTES ---------------
+@router.get("/integration/{slug}/link")
+async def link_integration(
+    slug: str,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Initiate linking for an integration (e.g., Gmail).
+    Returns OAuth URL or integration-specific instructions.
+    """
+    return await IntegrationController.link_integration(slug, user, db)
+
+
+@router.get("/integration/{slug}/callback")
+async def integration_callback(
+    slug: str,
+    code: str,
+    state: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Handle OAuth callback for integration (public endpoint - no auth required).
+    Completes the integration linking process and redirects to frontend.
+    """
+    return await IntegrationController.oauth_callback(slug, code, state, db)
+
+
+@router.delete("/integration/{slug}/delink")
+async def delink_integration(
+    slug: str,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Delink/disconnect an integration.
+    Removes tokens and integration configuration.
+    """
+    return await IntegrationController.delink_integration(slug, user, db)

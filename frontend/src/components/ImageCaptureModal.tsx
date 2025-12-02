@@ -75,32 +75,6 @@ export function ImageCaptureModal({ isOpen, onClose }: ImageCaptureModalProps) {
       console.log("Media stream obtained", mediaStream);
       setStream(mediaStream);
       setIsCameraActive(true);
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        
-        // Force video to load and play
-        videoRef.current.load();
-        
-        try {
-          await videoRef.current.play();
-          console.log("Video playback started");
-          
-          // Fallback: set ready after a short delay if events don't fire
-          setTimeout(() => {
-            if (videoRef.current && videoRef.current.readyState >= 2) {
-              console.log("Fallback: Setting video ready");
-              setIsVideoReady(true);
-            }
-          }, 500);
-        } catch (playError) {
-          console.error("Error playing video:", playError);
-          // Set as ready anyway after a delay, video might work
-          setTimeout(() => {
-            setIsVideoReady(true);
-          }, 1000);
-        }
-      }
     } catch (error) {
       console.error("Camera access error:", error);
       setCameraError("Unable to access camera. Please check permissions.");
@@ -233,7 +207,10 @@ export function ImageCaptureModal({ isOpen, onClose }: ImageCaptureModalProps) {
   const handleClose = () => {
     if (uploadMutation.isPending) return;
     
+    // Always stop the camera first
     stopCamera();
+    
+    // Then reset all state
     form.reset();
     setCapturedImage(null);
     setImageFile(null);
@@ -242,6 +219,8 @@ export function ImageCaptureModal({ isOpen, onClose }: ImageCaptureModalProps) {
     setCameraError(null);
     setIsCameraActive(false);
     setIsVideoReady(false);
+    
+    // Call the parent's onClose
     onClose();
   };
 
@@ -251,47 +230,61 @@ export function ImageCaptureModal({ isOpen, onClose }: ImageCaptureModalProps) {
       startCamera();
     }
     
-    // Cleanup when modal closes
+    // Cleanup when modal closes or component unmounts
     return () => {
-      if (!isOpen) {
-        stopCamera();
-      }
+      stopCamera();
     };
   }, [isOpen, capturedImage, uploadComplete]);
 
-  // Handle video ready state
+  // Handle video ready state and stream attachment
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !stream) return;
+    if (!video) return;
 
-    const handleLoadedMetadata = () => {
-      console.log("Video metadata loaded", {
-        videoWidth: video.videoWidth,
-        videoHeight: video.videoHeight,
+    // If we have a stream, attach it to the video element
+    if (stream) {
+      console.log("Attaching stream to video element");
+      video.srcObject = stream;
+      
+      const handleLoadedMetadata = () => {
+        console.log("Video metadata loaded", {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+        });
+        setIsVideoReady(true);
+      };
+
+      const handleCanPlay = () => {
+        console.log("Video can play");
+        setIsVideoReady(true);
+      };
+
+      const handleError = (e: Event) => {
+        console.error("Video error:", e);
+        setCameraError("Error loading video stream");
+        setIsVideoReady(false);
+      };
+
+      video.addEventListener("loadedmetadata", handleLoadedMetadata);
+      video.addEventListener("canplay", handleCanPlay);
+      video.addEventListener("error", handleError);
+
+      // Start playing the video
+      video.play().catch(err => {
+        console.error("Error playing video:", err);
+        // Try setting ready anyway after a delay
+        setTimeout(() => setIsVideoReady(true), 500);
       });
-      setIsVideoReady(true);
-    };
 
-    const handleCanPlay = () => {
-      console.log("Video can play");
-      setIsVideoReady(true);
-    };
-
-    const handleError = (e: Event) => {
-      console.error("Video error:", e);
-      setCameraError("Error loading video stream");
-      setIsVideoReady(false);
-    };
-
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("canplay", handleCanPlay);
-    video.addEventListener("error", handleError);
-
-    return () => {
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("canplay", handleCanPlay);
-      video.removeEventListener("error", handleError);
-    };
+      return () => {
+        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("canplay", handleCanPlay);
+        video.removeEventListener("error", handleError);
+      };
+    } else {
+      // No stream, clear the video element
+      video.srcObject = null;
+    }
   }, [stream]);
 
   return (

@@ -88,6 +88,7 @@ class FileProcessor:
         )
 
     async def _save_attachment(self, attachment_id, attachment_info, email_fk_id, filename):
+        # Direct DB calls (sync) - no executor needed
         attachment_obj = self.db_service.get_attachment_by_id(attachment_id)
 
         if not attachment_obj:
@@ -112,18 +113,6 @@ class FileProcessor:
             print("attachment already exists, skipping ")
 
     async def _validate_and_read_file(self, file: UploadFile) -> bytes:
-        """
-        Validate file type and read file data.
-        
-        Args:
-            file: FastAPI UploadFile object
-            
-        Returns:
-            bytes: File data
-            
-        Raises:
-            ProcessingError: If file type is not supported
-        """
         if not self._is_supported_file(file.filename):
             raise ProcessingError(
                 f"Unsupported file type: {self._get_file_extension(file.filename)}"
@@ -131,30 +120,11 @@ class FileProcessor:
         return await file.read()
 
     def _generate_or_validate_hash(self, file_data: bytes, file_hash: Optional[str] = None) -> str:
-        """
-        Generate file hash if not provided, or validate if provided.
-        
-        Args:
-            file_data: File content as bytes
-            file_hash: Optional pre-computed hash
-            
-        Returns:
-            str: SHA-256 hash of the file
-        """
         if file_hash:
             return file_hash
         return FileHashUtils.generate_file_hash_from_bytes(file_data)
 
     async def _upload_to_s3(self, file: UploadFile) -> str:
-        """
-        Upload file to S3 and return the S3 key.
-        
-        Args:
-            file: FastAPI UploadFile object
-            
-        Returns:
-            str: S3 key where the file is stored
-        """
         return await self.s3_service.upload_file(file)
 
     def _create_manual_upload_entry(self, user_id: int, document_type: str, upload_notes: Optional[str] = None) -> ManualUpload:

@@ -8,7 +8,7 @@ import { format } from "date-fns";
 interface ExpenseListProps {
   expenses: Expense[];
   onEdit: (expense: Expense) => void;
-  onDelete: (id: number) => void;
+  onDelete: (uuid: string) => void;
   onTransactionClick?: (expense: Expense) => void;
 }
 
@@ -70,7 +70,7 @@ export function ExpenseList({ expenses, onEdit, onDelete, onTransactionClick }: 
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => onDelete(expense.id)}
+                      onClick={() => onDelete(expense.uuid)}
                       className="h-8 w-8 rounded-md hover:bg-destructive/10 text-destructive transition-smooth"
                     >
                       <Trash2 className="h-3.5 w-3.5" />

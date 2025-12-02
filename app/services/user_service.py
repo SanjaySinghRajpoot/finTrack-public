@@ -1,16 +1,64 @@
-from requests import Session
+from sqlalchemy.orm import Session
 from app.services.db_service import DBService
 from app.services.subscription_service import SubscriptionService
-from app.services.integration_service import IntegrationService
+from app.services.integration import IntegrationService
+from app.models.models import User
+from app.utils.exceptions import DatabaseError
 
 
 class UserService:
 
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_or_create_user(self, user_info: dict) -> User:
+        try:
+            email = user_info.get("email")
+            
+            # Check if user exists
+            user = self.db.query(User).filter(User.email == email).first()
+            
+            if user:
+                return user
+            
+            # Create new user
+            user = User(
+                email=email,
+                first_name=user_info.get("name"),
+                profile_image=user_info.get("picture"),
+                locale="hi",
+                country="India"
+            )
+            
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            
+            # Create starter subscription for new user
+            self._create_starter_subscription_for_user(user.id)
+            
+            return user
+            
+        except Exception as e:
+            self.db.rollback()
+            raise DatabaseError(
+                "Failed to get or create user",
+                details={"email": user_info.get("email"), "error": str(e)}
+            )
+
+    def _create_starter_subscription_for_user(self, user_id: int):
+        try:
+            subscription_service = SubscriptionService(self.db)
+            subscription_service.create_starter_subscription_safe(user_id)
+        except Exception as e:
+            # Log the error but don't fail the user creation
+            print(f"Warning: Could not create starter subscription for user {user_id}: {e}")
+
     async def get_user_settings(self, user: dict, db: Session):
         try:
-            db_service = DBService(db)
-            subscription_service = SubscriptionService(db)
-            integration_service = IntegrationService(db)
+            db_service = DBService(self.db)
+            subscription_service = SubscriptionService(self.db)
+            integration_service = IntegrationService(self.db)
             
             user_id = user.get("user_id")
             

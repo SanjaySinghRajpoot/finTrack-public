@@ -84,7 +84,8 @@ class Every24HoursCronJob(BaseCronJob):
                     # Update the integration status
                     db_service.update_sync_data(integration_id=integration_id)
 
-                    access_token = token_service.get_token(user_id=user_id, provider="gmail")
+                    # get_token is now async, so we need to await it
+                    access_token = await token_service.get_token(user_id=user_id, provider="gmail")
                     if not access_token:
                         logger.warning(f"⚠️ Skipping user {user_id}: No valid access token found.")
                         continue
@@ -143,7 +144,7 @@ class IsEmailProcessedCheckCRON(BaseCronJob):
             db = next(db_gen)
             db_service = DBService(db)
 
-
+            # Direct DB call (sync) - no executor needed
             emails = db_service.get_not_processed_mails()
 
             processed_emails = []
@@ -166,9 +167,14 @@ class IsEmailProcessedCheckCRON(BaseCronJob):
                     "has_attachments": has_attachments
                 })
 
-                # Call the LLM service
+                # Call the LLM service - wrap sync call in executor
                 llm_service = LLMService(email.user_id, db_service)
-                llm_service.llm_batch_processing(processed_emails)
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: llm_service.llm_batch_processing(processed_emails)
+                )
 
             logger.info("Task completed successfully!")
         except Exception as e:

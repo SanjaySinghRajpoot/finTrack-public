@@ -5,10 +5,10 @@ import datetime
 
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRY_MINUTES = int(os.getenv("JWT_EXPIRY_MINUTES", "60"))
+JWT_EXPIRY_MINUTES = int(os.getenv("JWT_EXPIRY_MINUTES", "1440"))
 
 class JwtService:
-    def __init__(self, secret: str = JWT_SECRET, algorithm: str = JWT_ALGORITHM, expiry_minutes: int = 60):
+    def __init__(self, secret: str = JWT_SECRET, algorithm: str = JWT_ALGORITHM, expiry_minutes: int = JWT_EXPIRY_MINUTES):
         self.secret = secret
         self.algorithm = algorithm
         self.expiry_minutes = expiry_minutes

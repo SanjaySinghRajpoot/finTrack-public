@@ -16,7 +16,7 @@ class S3Service:
         )
         self.bucket_name = os.getenv("AWS_S3_BUCKET")
 
-    def get_presigned_url(self, file_key: str, expires_in: int = 3600) -> str:
+    async def get_presigned_url(self, file_key: str, expires_in: int = 3600) -> str:
         """
         Generate a pre-signed URL for accessing a file in S3.
 
@@ -28,10 +28,17 @@ class S3Service:
             str: A pre-signed URL for viewing/downloading the file
         """
         try:
-            presigned_url = self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.bucket_name, "Key": file_key},
-                ExpiresIn=expires_in,  # Default 1 hour
+            # Run sync boto3 call in executor to avoid blocking
+            import asyncio
+            loop = asyncio.get_event_loop()
+            
+            presigned_url = await loop.run_in_executor(
+                None,
+                lambda: self.s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": self.bucket_name, "Key": file_key},
+                    ExpiresIn=expires_in,  # Default 1 hour
+                )
             )
             return presigned_url
 

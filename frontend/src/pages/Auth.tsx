@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Wallet, TrendingUp, PieChart, Shield } from "lucide-react";
+import { Sparkles, TrendingUp, PieChart, Shield } from "lucide-react";
 import { api, getJwtCookie } from "@/lib/api";
 
 const Auth = () => {
@@ -42,7 +42,7 @@ const Auth = () => {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg">
-                <Wallet className="h-7 w-7 text-primary-foreground" />
+                <Sparkles className="h-7 w-7 text-primary-foreground" />
               </div>
               <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
                 FinTrack
@@ -98,7 +98,7 @@ const Auth = () => {
           <CardHeader className="space-y-3 pb-6 relative z-10">
             <div className="md:hidden flex items-center gap-3 mb-2">
               <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md">
-                <Wallet className="h-6 w-6 text-primary-foreground" />
+                <Sparkles className="h-6 w-6 text-primary-foreground" />
               </div>
               <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
                 FinTrack

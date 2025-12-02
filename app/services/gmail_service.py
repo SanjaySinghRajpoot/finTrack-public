@@ -3,6 +3,7 @@ import base64
 import logging
 from pathlib import Path
 from typing import Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fastapi import HTTPException
@@ -34,11 +35,12 @@ class GmailClient:
             self.llm_service = LLMService(user_id=user_id, db=db)
             self.batch_size = 10
             self.process_batch_size = None
+            self._executor = ThreadPoolExecutor(max_workers=5)
         except Exception as e:
             raise BusinessLogicError("Failed to initialize Gmail client", details={"error": str(e)})
 
     def _get(self, endpoint: str, params: dict = None):
-        """Helper for GET requests with auth header."""
+        """Helper for GET requests with auth header - SYNC method."""
         url = f"{self.BASE_URL}/{endpoint}"
         try:
             resp = requests.get(url, headers=self.headers, params=params)
@@ -58,9 +60,9 @@ class GmailClient:
             raise ExternalServiceError("Gmail API", f"Network error: {str(e)}", 
                                      details={"endpoint": endpoint})
 
-    def list_messages(self, limit: int = 100):
+    async def list_messages(self, limit: int = 100):
         """
-        List up to `limit` Gmail messages that are finance-related.
+        List up to `limit` Gmail messages that are finance-related (async).
         Filters for emails with:
           - keywords in subject/body (invoice, bill, payment, subscription)
           - OR attachments likely to be invoices
@@ -83,7 +85,12 @@ class GmailClient:
                     params["pageToken"] = page_token
 
                 try:
-                    data = self._get("messages", params=params)
+                    # Run sync _get in thread pool to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    data = await loop.run_in_executor(
+                        self._executor,
+                        lambda: self._get("messages", params=params)
+                    )
                 except (AuthenticationError, ExternalServiceError) as e:
                     # Re-raise authentication and service errors
                     raise e
@@ -108,10 +115,15 @@ class GmailClient:
 
         return all_messages[:limit]
 
-    def get_message(self, msg_id: str):
-        """Fetch full message details by ID."""
+    async def get_message(self, msg_id: str):
+        """Fetch full message details by ID (async)."""
         try:
-            return self._get(f"messages/{msg_id}", params={"format": "full"})
+            # Run sync _get in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                lambda: self._get(f"messages/{msg_id}", params={"format": "full"})
+            )
         except (AuthenticationError, ExternalServiceError, NotFoundError) as e:
             # Re-raise our custom exceptions
             raise e
@@ -146,13 +158,13 @@ class GmailClient:
 
     async def fetch_emails(self):
         """
-        Fetch emails with subject, sender, body, and attachments (if any).
+        Fetch emails with subject, sender, body, and attachments (if any) - fully async.
         - Processes emails in batches of 10.
         - Waits 2 seconds between batches to avoid hitting Gmail API limits.
         - Handles both attachment and non-attachment emails gracefully.
         """
         try:
-            messages = self.list_messages()  # Max 100 messages per call
+            messages = await self.list_messages()  # Async call
             total_messages = len(messages)
 
             if not total_messages:
@@ -181,19 +193,19 @@ class GmailClient:
                             print("⚠️ Skipping message with no ID.")
                             continue
 
-                        # Skip already processed emails
+                        # Skip already processed emails - direct DB call (sync)
                         if self.db.get_email_by_id(msg_id):
                             print(f"✅ Already processed message {msg_id}")
                             continue
 
-                        msg_data = self.get_message(msg_id)
+                        msg_data = await self.get_message(msg_id)  # Await async call
                         payload = msg_data.get("payload", {})
                         headers_list = payload.get("headers", [])
 
                         subject, sender = self._extract_headers(headers_list)
                         body = self._decode_body(payload)
 
-                        # Create base email record
+                        # Create base email record - direct DB call (sync)
                         email_obj = self._create_email_record(
                             msg_id=msg_id,
                             sender=sender,
@@ -235,7 +247,12 @@ class GmailClient:
 
             if len(processed_emails) != 0:
                 try:
-                    self.llm_service.llm_batch_processing(processed_emails)
+                    # Run sync LLM processing in executor to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        self._executor,
+                        lambda: self.llm_service.llm_batch_processing(processed_emails)
+                    )
                 except Exception as e:
                     print(f"⚠️ LLM batch processing failed: {e}")
                     # Don't fail the entire operation if LLM processing fails

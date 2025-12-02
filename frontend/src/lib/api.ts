@@ -28,7 +28,25 @@ export const getJwtCookie = (): string | null => {
 };
 
 export const clearJwtCookie = () => {
+  // Get the current domain
+  const hostname = window.location.hostname;
+  
+  // For production domains (not localhost), extract the root domain
+  let domain = '';
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    domain = `; domain=${hostname}`;
+  }
+  
+  // Clear cookie with multiple attempts to ensure it's removed
+  // 1. Clear with domain and path
+  document.cookie = `${JWT_COOKIE_NAME}=; path=/; max-age=0${domain}`;
+  
+  // 2. Clear without domain (for localhost)
   document.cookie = `${JWT_COOKIE_NAME}=; path=/; max-age=0`;
+  
+  // 3. Set expires to past date as fallback
+  document.cookie = `${JWT_COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT${domain}`;
+  document.cookie = `${JWT_COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 };
 
 // Helper to get auth headers
@@ -245,9 +263,14 @@ export interface UploadErrorResponse {
 
 export const api = {
   // Auth
-  login: () => {
-    // Since the backend returns JSON directly, we need to use full page redirect
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=1053645079359-f1vdjlvg1q7hcta1fji9s8b60ucgl9pu.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fapi%2Femails%2Foauth2callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile&access_type=offline&prompt=consent`;
+  login: async () => {
+    // Fetch the auth URL from the backend
+    const response = await fetch(`${API_BASE_URL}/login`);
+    if (!response.ok) throw new Error('Failed to get login URL');
+    const { auth_url } = await response.json();
+    
+    // Redirect to the Google OAuth URL
+    window.location.href = auth_url;
   },
 
   logout: () => {
@@ -293,8 +316,8 @@ export const api = {
     return response.json();
   },
 
-  deleteExpense: async (id: number): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/expense/${id}`, {
+  deleteExpense: async (uuid: string): Promise<void> => {
+    const response = await fetch(`${API_BASE_URL}/expense/${uuid}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
@@ -372,6 +395,24 @@ export const api = {
       headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error('Failed to fetch attachment signed URL');
+    return response.json();
+  },
+
+  // Integrations
+  linkIntegration: async (slug: string): Promise<{ auth_url: string }> => {
+    const response = await fetch(`${API_BASE_URL}/integration/${slug}/link`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to initiate integration linking');
+    return response.json();
+  },
+
+  delinkIntegration: async (slug: string): Promise<{ message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/integration/${slug}/delink`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to delink integration');
     return response.json();
   },
 };

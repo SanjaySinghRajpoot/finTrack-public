@@ -11,11 +11,14 @@ from app.models.models import ProcessedEmailData
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Load client secrets from Google Cloud Console
 CLIENT_SECRETS_FILE = "credentials.json"
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-REDIRECT_URI = "http://localhost:8000/api/emails/oauth2callback"
+REDIRECT_URI = f"{os.getenv('HOST_URL', 'https://fintrack.rapidlabs.app')}/api/emails/oauth2callback"
 
 class GmailOAuth:
     """Handles OAuth flow for Gmail."""

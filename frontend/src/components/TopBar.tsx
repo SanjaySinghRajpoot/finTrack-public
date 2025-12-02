@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, User, Search } from "lucide-react";
+import { LogOut, User, Search, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -32,7 +32,10 @@ export const TopBar = () => {
       <div className="h-full px-6 flex items-center justify-between gap-4">
         {/* App Title / Breadcrumb */}
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-foreground hidden md:block">FinTrack</h2>
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md md:hidden">
+            <Wallet className="h-4 w-4 text-primary-foreground" />
+          </div>
+          <h2 className="text-lg font-semibold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent hidden md:block">FinTrack</h2>
         </div>
 
         {/* User Profile */}

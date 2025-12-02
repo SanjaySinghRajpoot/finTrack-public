@@ -6,7 +6,7 @@ from requests import Session
 from sqlalchemy import text
 from sqlalchemy.orm import defer, joinedload, selectinload
 
-from app.models.models import Attachment, Email, ProcessedEmailData, UserToken, Expense, User, IntegrationStatus, \
+from app.models.models import Attachment, Email, ProcessedEmailData, Expense, User, IntegrationStatus, \
     EmailConfig, IntegrationState, Subscription, Feature, Plan, PlanFeature, Integration, IntegrationFeature
 from app.utils.utils import DuplicateCheckResult
 
@@ -253,12 +253,18 @@ class DBService:
             return {"error": str(e)}
 
 
-    def get_expense(self, expense_id: int, user_id: int):
-        return self.db.query(Expense).filter(
-            Expense.id == expense_id,
-            Expense.user_id == user_id,
-            Expense.deleted_at.is_(None)
-        ).first()
+    def get_expense(self, expense_uuid: str, user_id: int):
+        try:
+            return self.db.query(Expense).filter(
+                Expense.uuid == expense_uuid,
+                Expense.user_id == user_id,
+                Expense.deleted_at.is_(None)
+            ).first()
+        except Exception as e:
+            # Log the actual error for debugging but don't expose it to user
+            print(f"Database error in get_expense: {str(e)}")
+            from app.utils.exceptions import DatabaseError
+            raise DatabaseError("Failed to retrieve expense")
 
     def update_expense(self, expense: Expense, data: dict):
         for key, value in data.items():
@@ -270,10 +276,17 @@ class DBService:
         return expense
 
     def soft_delete_expense(self, expense: Expense):
-        expense.deleted_at = datetime.utcnow()
-        self.db.commit()
-        self.db.refresh(expense)
-        return expense
+        try:
+            expense.deleted_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(expense)
+            return expense
+        except Exception as e:
+            self.db.rollback()
+            # Log the actual error for debugging but don't expose it to user
+            print(f"Database error in soft_delete_expense: {str(e)}")
+            from app.utils.exceptions import DatabaseError
+            raise DatabaseError("Failed to delete expense")
 
     def import_processed_data(self, processed_data_id: int):
         try:

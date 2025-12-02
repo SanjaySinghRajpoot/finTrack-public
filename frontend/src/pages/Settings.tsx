@@ -1,36 +1,130 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Settings as SettingsIcon, Mail, MessageSquare, CheckCircle2, AlertCircle, Calendar, Activity, CreditCard, Zap, Users, Clock, Shield, Star, ExternalLink, Info } from "lucide-react";
+import { Settings as SettingsIcon, Mail, MessageSquare, CheckCircle2, AlertCircle, Calendar, Activity, CreditCard, Zap, Users, Clock, Shield, Star, ExternalLink, Info, Link2, Unlink, Loader2 } from "lucide-react";
 import { api, UserSettings, Integration } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import GmailIntegration from "@/components/GmailIntegration";
 
 const Settings = () => {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [delinkingIntegration, setDelinkingIntegration] = useState<string | null>(null);
+  const [linkingIntegration, setLinkingIntegration] = useState<string | null>(null);
+  const [showDelinkDialog, setShowDelinkDialog] = useState<string | null>(null);
   const { toast } = useToast();
 
+  const fetchSettings = async () => {
+    try {
+      const data = await api.getUserSettings();
+      setSettings(data);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load settings",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const data = await api.getUserSettings();
-        setSettings(data);
-      } catch (error) {
+    fetchSettings();
+
+    // Check for integration callback status in URL
+    const params = new URLSearchParams(window.location.search);
+    const integration = params.get('integration');
+    const status = params.get('status');
+    const message = params.get('message');
+
+    if (integration && status) {
+      if (status === 'success') {
+        toast({
+          title: "Integration Connected",
+          description: `${integration.charAt(0).toUpperCase() + integration.slice(1)} integration connected successfully`,
+        });
+      } else if (status === 'error') {
         toast({
           variant: "destructive",
-          title: "Error",
-          description: "Failed to load settings",
+          title: "Integration Failed",
+          description: message || `Failed to connect ${integration} integration`,
         });
-      } finally {
-        setLoading(false);
       }
-    };
 
-    fetchSettings();
+      // Clean up URL parameters
+      window.history.replaceState({}, '', '/settings');
+      
+      // Refresh settings to show new integration status
+      fetchSettings();
+    }
   }, [toast]);
+
+  const handleLinkIntegration = async (slug: string) => {
+    setLinkingIntegration(slug);
+    
+    try {
+      const response = await api.linkIntegration(slug);
+      
+      // Redirect to OAuth URL
+      if (response.auth_url) {
+        window.location.href = response.auth_url;
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Connection Failed",
+          description: "No authorization URL provided",
+        });
+        setLinkingIntegration(null);
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Connection Failed",
+        description: error instanceof Error ? error.message : "Failed to connect integration",
+      });
+      setLinkingIntegration(null);
+    }
+  };
+
+  const handleDelinkIntegration = async (slug: string) => {
+    setDelinkingIntegration(slug);
+    setShowDelinkDialog(null);
+    
+    try {
+      await api.delinkIntegration(slug);
+      
+      toast({
+        title: "Integration Disconnected",
+        description: `${slug.charAt(0).toUpperCase() + slug.slice(1)} integration disconnected successfully`,
+      });
+      
+      // Refresh settings
+      fetchSettings();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Disconnection Failed",
+        description: error instanceof Error ? error.message : "Failed to disconnect integration",
+      });
+    } finally {
+      setDelinkingIntegration(null);
+    }
+  };
 
   const getIntegrationIcon = (type: string) => {
     switch (type.toLowerCase()) {
@@ -70,6 +164,14 @@ const Settings = () => {
         {status === "trial" ? "Free Trial" : status}
       </Badge>
     );
+  };
+
+  const getGmailConnectionStatus = () => {
+    if (!settings) return false;
+    const gmailIntegration = settings.integrations.find(
+      (integration) => integration.integration_slug === "gmail"
+    );
+    return gmailIntegration?.status === "connected";
   };
 
   if (loading) {
@@ -231,21 +333,17 @@ const Settings = () => {
           <h2 className="text-xl font-semibold text-foreground">Connected Integrations</h2>
         </div>
 
-        {settings.integrations.length === 0 ? (
-          <Card className="shadow-soft border-border">
-            <CardContent className="p-8 md:p-12">
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 mb-4">
-                  <SettingsIcon className="h-8 w-8 md:h-10 md:w-10 text-primary" />
-                </div>
-                <p className="text-lg font-medium text-foreground">No Integrations Found</p>
-                <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-                  Connect your accounts to start tracking expenses automatically.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
+        {/* Gmail Integration Component - Only show if not in integrations list */}
+        {!settings.integrations.some(i => i.integration_slug === "gmail") && (
+          <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
+            <GmailIntegration 
+              isConnected={false} 
+              onStatusChange={fetchSettings}
+            />
+          </div>
+        )}
+
+        {settings.integrations.length > 0 && (
           <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
             {settings.integrations.map((integration) => (
               <Dialog key={integration.integration_id}>
@@ -338,6 +436,57 @@ const Settings = () => {
                           </div>
                         </div>
                       )}
+
+                      {/* Connect/Disconnect Button based on status */}
+                      <div className="pt-4 border-t border-border">
+                        {integration.status.toLowerCase() === 'connected' ? (
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowDelinkDialog(integration.integration_slug);
+                            }}
+                            disabled={delinkingIntegration === integration.integration_slug}
+                            variant="destructive"
+                            size="sm"
+                            className="w-full"
+                          >
+                            {delinkingIntegration === integration.integration_slug ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Disconnecting...
+                              </>
+                            ) : (
+                              <>
+                                <Unlink className="mr-2 h-4 w-4" />
+                                Disconnect {integration.integration_name}
+                              </>
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLinkIntegration(integration.integration_slug);
+                            }}
+                            disabled={linkingIntegration === integration.integration_slug}
+                            variant="default"
+                            size="sm"
+                            className="w-full"
+                          >
+                            {linkingIntegration === integration.integration_slug ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Connecting...
+                              </>
+                            ) : (
+                              <>
+                                <Link2 className="mr-2 h-4 w-4" />
+                                Connect {integration.integration_name}
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 </DialogTrigger>
@@ -513,33 +662,27 @@ const Settings = () => {
         )}
       </div>
 
-      {/* 
-      TODO: Commented out Integration Overview section - can be restored if needed
-      
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-primary" />
-          <h2 className="text-xl font-semibold text-foreground">Integration Overview</h2>
-        </div>
-        
-        <Card className="shadow-sm border-border bg-gradient-to-br from-muted/20 to-muted/10 opacity-90">
-          <CardHeader className="border-b bg-gradient-to-r from-muted/30 to-muted/20">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-muted/30 shrink-0">
-                <Activity className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <CardTitle className="text-lg">Integration Overview</CardTitle>
-                <p className="text-sm text-muted-foreground">Connected services summary</p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-6 space-y-4">
-            // Integration overview content would go here
-          </CardContent>
-        </Card>
-      </div>
-      */}
+      {/* Delink Confirmation Dialog */}
+      <AlertDialog open={!!showDelinkDialog} onOpenChange={(open) => !open && setShowDelinkDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect Integration?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to disconnect this integration? This will stop automatic
+              syncing and remove stored credentials. You can reconnect at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => showDelinkDialog && handleDelinkIntegration(showDelinkDialog)} 
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
