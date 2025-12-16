@@ -6,10 +6,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db_config import engine
+from app.db_config import engine, SessionLocal
 from app.models import models
 from app.routes.routes import router
-from app.services.cron_service import Every24HoursCronJob, Every1HourTokenRefreshCronJob, IsEmailProcessedCheckCRON
+from app.services.cron_service import Every24HoursCronJob, Every1HourTokenRefreshCronJob, IsEmailProcessedCheckCRON, DocumentStagingProcessorCron
+from app.services.initial_setup_service import run_initial_setup
 from app.utils.exception_handlers import register_exception_handlers
 from app.middleware.request_id_middleware import RequestIDMiddleware
 
@@ -31,6 +32,14 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     try:
         """Lifespan context manager for startup and shutdown events"""
+        # Startup: Run initial setup
+        logger.info("Running initial data setup...")
+        try:
+            run_initial_setup()
+        except Exception as setup_error:
+            logger.warning(f"Initial setup encountered an issue: {setup_error}")
+            # Continue running even if setup fails (data might already exist)
+        
         # Startup: Initialize and start scheduler
         logger.info("Starting scheduler...")
 
@@ -38,6 +47,7 @@ async def lifespan(app: FastAPI):
         Every24HoursCronJob(scheduler).register()
         Every1HourTokenRefreshCronJob(scheduler).register()
         IsEmailProcessedCheckCRON(scheduler).register()
+        DocumentStagingProcessorCron(scheduler).register()
         # Add more cron jobs here as needed
 
         scheduler.start()

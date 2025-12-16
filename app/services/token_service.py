@@ -8,6 +8,7 @@ import datetime
 import httpx
 import asyncio
 
+from app.core.config import settings
 from app.models.models import Email, EmailConfig, IntegrationStatus, IntegrationState, Integration, User
 from app.services.db_service import DBService
 from app.services.integration import IntegrationService
@@ -24,16 +25,15 @@ from app.utils.exceptions import (
     BusinessLogicError,
     AuthenticationError
 )
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
-# Encryption key (should be stored securely, e.g., in env variables)
-ENCRYPTION_KEY = b'X1Tz1y9Ff0QZxQ9fDd0tKXk8h1u4z6pF8H2xG4XK9sY='
+
+# Use centralized config for encryption
+ENCRYPTION_KEY = settings.ENCRYPTION_KEY.encode() if isinstance(settings.ENCRYPTION_KEY, str) else settings.ENCRYPTION_KEY
 fernet = Fernet(ENCRYPTION_KEY)
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+# Use centralized config for Google OAuth
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 class TokenService:
@@ -230,10 +230,6 @@ class TokenService:
             raise DatabaseError(f"Failed to update integration", details={"error": str(e)})
 
     async def get_token(self, user_id: int, provider: str = "gmail") -> str | None:
-        """
-        Retrieve and decrypt stored Gmail tokens for a given user.
-        Returns a dict with access and refresh tokens, or None if not found.
-        """
         # Direct DB queries (sync) - no executor needed
         # Step 1: Find integration for the given user and provider
         integration_status = (
@@ -408,8 +404,8 @@ class TokenService:
     async def _request_google_tokens(self, code: str) -> dict:
         """Async token request using httpx"""
         try:
-            # Get the redirect URI from environment - must match the one used in the auth URL
-            redirect_uri = os.getenv("HOST_URL", "https://fintrack.rapidlabs.app") + "/api/emails/oauth2callback"
+            # Use centralized config for redirect URI
+            redirect_uri = settings.OAUTH_REDIRECT_URI
             
             data = {
                 "code": code,
@@ -449,8 +445,8 @@ class TokenService:
         This is separate from the login flow.
         """
         try:
-            # Use the Gmail integration redirect URI
-            redirect_uri = os.getenv("HOST_URL", "https://fintrack.rapidlabs.app") + "/api/integration/gmail/callback"
+            # Use centralized config for Gmail integration redirect URI
+            redirect_uri = settings.GMAIL_INTEGRATION_REDIRECT_URI
             
             data = {
                 "code": code,

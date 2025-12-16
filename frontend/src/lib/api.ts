@@ -261,6 +261,58 @@ export interface UploadErrorResponse {
   error: string;
 }
 
+export interface FileUploadRequest {
+  filename: string;
+  content_type: string;
+  file_hash: string;
+  file_size: number;
+}
+
+export interface PresignedUrlRequest {
+  files: FileUploadRequest[];
+}
+
+export interface PresignedUrlData {
+  filename: string;
+  file_hash: string;
+  presigned_url: string | null;
+  s3_key: string | null;
+  remark: string; // 'success' or 'duplicate'
+  duplicate_attachment_id: number | null;
+}
+
+export interface PresignedUrlResponse {
+  message: string;
+  data: PresignedUrlData[];
+}
+
+export interface FileMetadata {
+  filename: string;
+  file_hash: string;
+  s3_key: string;
+  file_size: number;
+  content_type: string;
+  document_type?: string;
+  upload_notes?: string;
+}
+
+export interface FileMetadataRequest {
+  files: FileMetadata[];
+}
+
+export interface ProcessedFileData {
+  filename: string;
+  file_hash: string;
+  attachment_id: number;
+  manual_upload_id: number;
+  status: string; // 'created', 'existing', or 'queued_for_processing'
+}
+
+export interface FileMetadataResponse {
+  message: string;
+  data: ProcessedFileData[];
+}
+
 export const api = {
   // Auth
   login: async () => {
@@ -384,6 +436,37 @@ export const api = {
     if (!response.ok) {
       const errorData = await response.json();
       throw new Error(errorData.error || 'Failed to upload file');
+    }
+
+    return response.json();
+  },
+
+  // New presigned URL upload flow
+  getPresignedUrls: async (request: PresignedUrlRequest): Promise<PresignedUrlResponse> => {
+    const response = await fetch(`${API_BASE_URL}/files/presigned-urls`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to get presigned URLs');
+    }
+
+    return response.json();
+  },
+
+  submitFileMetadata: async (request: FileMetadataRequest): Promise<FileMetadataResponse> => {
+    const response = await fetch(`${API_BASE_URL}/files/metadata`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to submit file metadata');
     }
 
     return response.json();

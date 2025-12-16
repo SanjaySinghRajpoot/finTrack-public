@@ -3,10 +3,20 @@ from starlette.responses import JSONResponse
 
 from app.db_config import SessionLocal
 from app.middleware.auth_middleware import jwt_middleware
-from app.models.scheme import TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload
+from app.models.scheme import (
+    TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload,
+    PresignedUrlRequest, FileMetadataRequest
+)
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Query
-from app.controller.controller import EmailController, ProcessedDataController, AuthController, ExpenseController, \
-    FileController, UserController, IntegrationController
+from app.controller import (
+    EmailController,
+    ProcessedDataController,
+    AuthController,
+    ExpenseController,
+    FileController,
+    UserController,
+    IntegrationController
+)
 from app.services.s3_service import S3Service
 
 router = APIRouter()
@@ -106,6 +116,34 @@ async def delete_expense(expense_uuid: str, user=Depends(jwt_middleware), db: Se
 @router.get("/attachment/view")
 async def view_pdf(s3_url: str, user=Depends(jwt_middleware), db: Session = Depends(get_db)):
     return await FileController.get_attachment_signed_url(s3_url=s3_url, db=db)
+
+@router.post("/files/presigned-urls")
+async def get_presigned_upload_urls(
+    payload: PresignedUrlRequest,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Get presigned URLs for direct S3 upload.
+    Checks for duplicate files by hash before generating URLs.
+    """
+    return await FileController.get_presigned_upload_urls(payload, user, db)
+
+@router.post("/files/metadata")
+async def process_uploaded_files(
+    payload: FileMetadataRequest,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Process metadata for files uploaded directly to S3.
+    Creates attachment and manual_upload entries.
+    """
+    return await FileController.process_uploaded_files_metadata(**{
+        "payload": payload,
+        "user": user,
+        "db": db
+    })
 
 @router.post("/upload")
 async def upload_file_route(

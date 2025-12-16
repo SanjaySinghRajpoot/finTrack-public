@@ -1,11 +1,10 @@
 """Gmail Integration Service"""
 
-import os
 from typing import Dict, Any
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+from datetime import datetime
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.models import IntegrationStatus, IntegrationState, EmailConfig
 from app.services.token_service import TokenService
 from app.services.integration.base_integration_service import BaseIntegrationService
@@ -16,10 +15,6 @@ from app.utils.exceptions import (
     DatabaseError,
     AuthenticationError
 )
-
-load_dotenv()
-
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 class GmailIntegrationService(BaseIntegrationService):

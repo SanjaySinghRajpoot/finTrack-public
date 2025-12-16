@@ -353,15 +353,15 @@ const Transactions = () => {
                       <TableHead className="w-[120px] font-semibold text-foreground">Doc Type</TableHead>
                       <TableHead className="w-[130px] font-semibold text-foreground">Doc Number</TableHead>
                       <TableHead className="w-[120px] font-semibold text-foreground">Payment</TableHead>
-                      <TableHead className="w-[130px] text-right font-semibold text-foreground">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedData.map((item, index) => {
                       const isExpense = 'description' in item;
-                      // Get first item from processed_data array
-                      const processedData = isExpense && (item as Expense).processed_data && (item as Expense).processed_data!.length > 0 
-                        ? (item as Expense).processed_data![0] 
+                      // Get first item from processed_data array - with proper null checks
+                      const processedDataArray = isExpense ? (item as Expense).processed_data : null;
+                      const processedData = processedDataArray && processedDataArray.length > 0 
+                        ? processedDataArray[0] 
                         : null;
                       const categoryConfig = getCategoryConfig(
                         isExpense ? item.category : (item.category || "Other")
@@ -380,20 +380,22 @@ const Transactions = () => {
                           </TableCell>
                           <TableCell className="w-[300px]">
                             <div className="max-w-[300px]">
-                              <p className="font-semibold text-foreground text-sm leading-relaxed overflow-hidden text-ellipsis whitespace-nowrap" title={isExpense ? item.description : item.title}>
-                                {isExpense 
-                                  ? (item.description.length > 50 ? item.description.substring(0, 50) + '...' : item.description)
-                                  : (item.title.length > 50 ? item.title.substring(0, 50) + '...' : item.title)
-                                }
+                              <p className="font-semibold text-foreground text-sm leading-relaxed overflow-hidden text-ellipsis whitespace-nowrap" title={isExpense ? item.description : (item.title || processedData?.vendor_name || '')}>
+                                {(() => {
+                                  const displayText = isExpense 
+                                    ? (item.description || processedData?.vendor_name || '')
+                                    : (item.title || (item as ImportedExpense).vendor_name || '');
+                                  return displayText.length > 50 ? displayText.substring(0, 50) + '...' : displayText;
+                                })()}
                               </p>
                               {!isExpense && item.description && (
                                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed overflow-hidden text-ellipsis whitespace-nowrap" title={item.description}>
-                                  {item.description.length > 50 ? item.description.substring(0, 70) + '...' : item.description}
+                                  {(item.description || '').length > 50 ? (item.description || '').substring(0, 70) + '...' : item.description}
                                 </p>
                               )}
                               {isExpense && processedData?.description && (
                                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed overflow-hidden text-ellipsis whitespace-nowrap" title={processedData.description}>
-                                  {processedData.description.length > 50 ? processedData.description.substring(0, 70) + '...' : processedData.description}
+                                  {(processedData.description || '').length > 50 ? (processedData.description || '').substring(0, 70) + '...' : processedData.description}
                                 </p>
                               )}
                             </div>

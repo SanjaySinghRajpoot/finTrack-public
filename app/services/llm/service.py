@@ -1,16 +1,18 @@
-import os
 import json
 import re
 from typing import List, Dict, Any
 from openai import OpenAI
 from fastapi import HTTPException
 
+from app.core.config import settings
 from app.services.llm.models import DocumentProcessingRequest
 from app.services.llm.processors import (
     EmailBatchProcessor,
     ManualDocumentProcessor,
     ImageDocumentProcessor,
 )
+from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS
+from app.utils.json_validator import JSONValidator
 
 
 class LLMService:
@@ -23,72 +25,22 @@ class LLMService:
 
     def __init__(self, user_id, db):
         try:
-            self.api_key = os.getenv("OPENAI_API_KEY")
+            self.api_key = settings.OPENAI_API_KEY
             self.db = db
             if not self.api_key:
                 raise ValueError("OPENAI_API_KEY environment variable is not set")
 
             self.client = OpenAI(
                 api_key=self.api_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+                base_url=settings.OPENAI_BASE_URL
             )
 
-            self.schema = {
-                "is_processing_valid": {"type": "boolean", "default": False},
-                "source_id": {"type":"integer"},
-                "user_id": {"type": "integer"},
-                "document_type": {
-                    "type": "string",
-                    "description": "Type of document",
-                    "enum": ["invoice", "bill", "emi", "payment_receipt", "tax_invoice", "credit_note", "debit_note",
-                             "other"]
-                },
-                "title": {"type": "string", "description": "Document title or name"},
-                "description": {"type": "string", "description": "Brief description of the document"},
-                "document_number": {"type": "string",
-                                    "description": "Invoice number, bill number, or document reference number"},
-                "reference_id": {"type": "string", "description": "Additional reference ID or order number"},
-                "issue_date": {"type": "string", "format": "date",
-                               "description": "Date when the document was issued (YYYY-MM-DD)"},
-                "due_date": {"type": "string", "format": "date", "description": "Payment due date (YYYY-MM-DD)"},
-                "payment_date": {"type": "string", "format": "date",
-                                 "description": "Date when payment was made (YYYY-MM-DD)"},
-                "amount": {"type": "number", "description": "Total amount of the document"},
-                "currency": {"type": "string", "description": "Currency code (default: INR)", "default": "INR"},
-                "is_paid": {"type": "boolean", "description": "Whether the document has been paid", "default": False},
-                "payment_method": {"type": "string",
-                                   "description": "Method of payment (cash, card, bank transfer, etc.)"},
-                "vendor_name": {"type": "string", "description": "Name of the vendor or company"},
-                "vendor_gstin": {"type": "string", "description": "Vendor's GST identification number"},
-                "category": {"type": "string", "description": "Category of expense or document type"},
-                "tags": {"type": "array", "items": {"type": "string"},
-                         "description": "List of tags for categorization"},
-                "metadata": {"type": "array",
-                             "description": "List of all relevant document metadata to assist in later processing."},
-                "items": {
-                    "type": "array",
-                    "description": "Array of individual line items from the invoice/bill",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "item_name": {"type": "string", "description": "Name/description of the product or service"},
-                            "item_code": {"type": "string", "description": "Optional product/service code or SKU"},
-                            "category": {"type": "string", "description": "Product or service category"},
-                            "quantity": {"type": "number", "description": "Quantity of the product/service", "default": 1.0},
-                            "unit": {"type": "string", "description": "Unit of measurement (pcs, kg, hr, etc.)"},
-                            "rate": {"type": "number", "description": "Rate per unit of the item"},
-                            "discount": {"type": "number", "description": "Discount applied on the item", "default": 0.0},
-                            "tax_percent": {"type": "number", "description": "Applicable tax percentage"},
-                            "total_amount": {"type": "number", "description": "Total amount for the item"},
-                            "currency": {"type": "string", "description": "Currency code", "default": "INR"},
-                            "meta_data": {"type": "object", "description": "Any additional item-specific data"}
-                        },
-                        "required": ["item_name", "rate", "total_amount"]
-                    }
-                }
-            }
-
-            self.required_fields = ["title", "amount"]
+            # Use common schema from utils
+            self.schema = DOCUMENT_SCHEMA
+            self.required_fields = REQUIRED_FIELDS
+            
+            # Use common JSON validator
+            self.validator = JSONValidator(self.schema, self.required_fields)
 
             # Base prompt template that's shared for all processing types
             self.base_prompt_template = """
@@ -251,53 +203,8 @@ class LLMService:
             raise HTTPException(status_code=502, detail=f"Gemini API call with images failed: {str(e)}")
 
     def _validate_json(self, data):
-        """Validate a single or list of JSON objects against schema."""
-        try:
-            if isinstance(data, dict):
-                data = [data]
-
-            if not isinstance(data, list):
-                raise ValueError("Data must be an array of JSON objects")
-
-            validated_list = []
-
-            for idx, item in enumerate(data):
-                if not isinstance(item, dict):
-                    raise ValueError(f"Item at index {idx} is not a JSON object")
-
-                validated = {}
-                for key, rules in self.schema.items():
-                    value = item.get(key, rules.get("default"))
-                    expected_type = rules["type"]
-
-                    if key in self.required_fields and (value is None or value == ""):
-                        raise ValueError(f"Missing required field: {key} in item {idx}")
-
-                    if value is not None:
-                        if expected_type == "string" and not isinstance(value, str):
-                            raise ValueError(f"Field {key} in item {idx} must be a string")
-                        elif expected_type == "number" and not isinstance(value, (int, float)):
-                            raise ValueError(f"Field {key} in item {idx} must be a number")
-                        elif expected_type == "boolean" and not isinstance(value, bool):
-                            raise ValueError(f"Field {key} in item {idx} must be a boolean")
-                        elif expected_type == "array":
-                            if not isinstance(value, list):
-                                raise ValueError(f"Field {key} in item {idx} must be an array")
-                            if "items" in rules and rules["items"]["type"] == "string":
-                                if not all(isinstance(i, str) for i in value):
-                                    raise ValueError(f"All items in {key} (item {idx}) must be strings")
-
-                    validated[key] = value
-
-                extra_keys = set(item.keys()) - set(self.schema.keys())
-                if extra_keys:
-                    raise ValueError(f"Extra keys not allowed in item {idx}: {extra_keys}")
-
-                validated_list.append(validated)
-
-            return validated_list
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"JSON validation failed: {str(e)}")
+        """Validate a single or list of JSON objects against schema using common validator."""
+        return self.validator.validate(data)
 
     def llm_processing(self, texts: list[str]) -> list[dict]:
         """

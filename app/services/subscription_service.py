@@ -51,8 +51,10 @@ class SubscriptionService:
         if existing_subscription:
             raise ValueError(f"User {user_id} already has an active subscription")
         
-        # Get or create starter plan
-        starter_plan = self._get_or_create_starter_plan()
+        # Get starter plan (must exist - created by InitialSetupService)
+        starter_plan = self.db.query(Plan).filter(Plan.slug == "starter").first()
+        if not starter_plan:
+            raise ValueError("Starter plan not found. Please ensure initial setup has been run.")
         
         # Create subscription
         subscription = Subscription(
@@ -103,45 +105,6 @@ class SubscriptionService:
             print(f"Warning: Could not create starter subscription for user {user_id}: {e}")
             return None
 
-    def _get_or_create_starter_plan(self) -> Plan:
-        """
-        Get existing starter plan or create one if it doesn't exist
-        
-        Returns:
-            Plan: The starter plan object
-        """
-        starter_plan = self.db.query(Plan).filter(Plan.slug == "starter").first()
-        
-        if not starter_plan:
-            starter_plan = self._create_default_starter_plan()
-        
-        return starter_plan
-    
-    def _create_default_starter_plan(self) -> Plan:
-        """
-        Create a default starter plan with predefined settings
-        
-        Returns:
-            Plan: The created starter plan object
-        """
-        starter_plan = Plan(
-            name="Starter Plan",
-            slug="starter",
-            price=0.0,
-            currency="INR",
-            billing_cycle="trial",
-            total_credits=100,  # Give 100 credits to start with
-            description="Free starter plan for new users",
-            is_active=True,
-            display_order=1
-        )
-        
-        self.db.add(starter_plan)
-        self.db.commit()
-        self.db.refresh(starter_plan)
-        
-        return starter_plan
-    
     def get_user_active_subscription(self, user_id: int) -> Optional[Subscription]:
         """
         Get the active subscription for a user
@@ -228,81 +191,14 @@ class SubscriptionService:
             int: The credit cost for the feature
             
         Raises:
-            ValueError: If feature not found and cannot be created
+            ValueError: If feature not found
         """
         feature = self.db.query(Feature).filter(Feature.feature_key == feature_key).first()
         
         if not feature:
-            # Create default feature if it doesn't exist
-            feature = self._create_default_feature(feature_key)
+            raise ValueError(f"Feature '{feature_key}' not found. Please ensure initial setup has been run.")
         
         return feature.credit_cost
-    
-    def _create_default_feature(self, feature_key: str) -> Feature:
-        """
-        Create a default feature entry based on the feature key
-        
-        Args:
-            feature_key: The feature key to create
-            
-        Returns:
-            Feature: The created feature object
-        """
-        # Define default configurations for known features
-        feature_defaults = {
-            "GMAIL_SYNC": {
-                "display_name": "Gmail Sync",
-                "description": "Synchronize emails from Gmail account",
-                "credit_cost": 1,
-                "category": "integration"
-            },
-            "FILE_UPLOAD": {
-                "display_name": "File Upload",
-                "description": "Synchronize emails from Gmail account",
-                "credit_cost": 1,
-                "category": "integration"
-            },
-            "EMAIL_PROCESSING": {
-                "display_name": "Email Processing",
-                "description": "Process and extract data from emails",
-                "credit_cost": 1,
-                "category": "core"
-            },
-            "PDF_EXTRACTION": {
-                "display_name": "PDF Text Extraction",
-                "description": "Extract text and data from PDF attachments",
-                "credit_cost": 2,
-                "category": "core"
-            },
-            "LLM_PROCESSING": {
-                "display_name": "AI Processing",
-                "description": "Process documents using AI/LLM services",
-                "credit_cost": 3,
-                "category": "ai"
-            }
-        }
-        
-        feature_config = feature_defaults.get(feature_key, {
-            "display_name": feature_key.replace("_", " ").title(),
-            "description": f"Feature: {feature_key}",
-            "credit_cost": 1,
-            "category": "general"
-        })
-        
-        feature = Feature(
-            feature_key=feature_key,
-            display_name=feature_config["display_name"],
-            description=feature_config["description"],
-            credit_cost=feature_config["credit_cost"],
-            category=feature_config["category"],
-            is_active=True
-        )
-        
-        self.db.add(feature)
-        self.db.commit()
-        self.db.refresh(feature)
-        
-        return feature
     
     def validate_credits_for_feature(self, user_id: int, feature_key: str) -> CreditValidationSchema:
         """

@@ -59,12 +59,20 @@ class IntegrationService:
         return self.query_service.get_all_integrations(include_inactive)
 
     def get_integration_by_slug(self, slug: str) -> Optional[Integration]:
-        integration = self.query_service.get_integration_by_slug(slug)
+        """
+        Get integration by slug.
         
-        if not integration and slug in INTEGRATION_DEFINITIONS:
-            integration = self.creation_service.create_integration_from_definition(slug)
+        Args:
+            slug: Integration slug to look up
             
-        return integration
+        Returns:
+            Integration object or None if not found
+            
+        Note:
+            Integrations must be created by InitialSetupService during app startup.
+            This method no longer creates integrations on-demand.
+        """
+        return self.query_service.get_integration_by_slug(slug)
 
     def get_integration_features(self, integration_id: int) -> List[FeatureSchema]:
         return self.feature_service.get_integration_features(integration_id)
@@ -122,10 +130,6 @@ class IntegrationService:
             self._build_user_integration_detail(user_id, user_integration)
             for user_integration in user_integrations
         ]
-    
-    def create_default_integrations(self) -> None:
-        """Create default integrations and features during app initialization."""
-        self.creation_service.create_default_integrations()
     
     def _build_user_integration_detail(
         self, 

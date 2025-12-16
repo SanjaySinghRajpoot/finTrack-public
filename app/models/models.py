@@ -74,6 +74,13 @@ class SubscriptionStatus(str, enum.Enum):
     expired = "expired"
     cancelled = "cancelled"
 
+class DocumentProcessingStatus(str, enum.Enum):
+    """Document staging processing status"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 # ================================================================================================
 # USER MANAGEMENT MODELS
 # ================================================================================================
@@ -252,6 +259,61 @@ class ManualUpload(Base, TimestampMixin):
         Index("idx_manual_uploads_user_created", "user_id", "created_at"),
     )
 
+class DocumentStaging(Base, TimestampMixin):
+    """
+    Staging table for documents to be processed asynchronously.
+    Accepts data from various sources (manual upload, email, etc.) and queues them for processing.
+    Uses source_id to fetch email and attachment data from their respective tables.
+    """
+    __tablename__ = "document_staging"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    uuid = Column(PG_UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False, index=True)
+
+    # References
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # File metadata
+    filename = Column(String(512), nullable=False)
+    file_hash = Column(String(64), nullable=True, index=True)
+    s3_key = Column(String(1024), nullable=True)  # Can be empty for email content without attachments
+    mime_type = Column(String(255), nullable=True)
+    file_size = Column(Integer, nullable=True)
+
+    # Document metadata
+    document_type = Column(String(50), nullable=True)
+    source_type = Column(String(50), nullable=False, index=True)  # manual, email, whatsapp, gdrive
+    upload_notes = Column(Text, nullable=True)
+    
+    # Processing status
+    document_processing_status = Column(String(50), default="pending", nullable=False, index=True)
+    processing_started_at = Column(DateTime(timezone=True), nullable=True)
+    processing_completed_at = Column(DateTime(timezone=True), nullable=True)
+    processing_attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=3, nullable=False)
+    
+    # Error tracking
+    error_message = Column(Text, nullable=True)
+    error_details = Column(JSON, nullable=True)
+    
+    # Additional metadata
+    meta_data = Column(JSON, nullable=True)
+    priority = Column(Integer, default=0, nullable=False)  # Higher number = higher priority
+
+    # Relationships
+    user = relationship("User")
+    source = relationship("Source")
+
+    __table_args__ = (
+        Index("idx_staging_status_created", "document_processing_status", "created_at"),
+        Index("idx_staging_user_status", "user_id", "document_processing_status"),
+        Index("idx_staging_priority_status", "priority", "document_processing_status", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<DocumentStaging(id={self.id}, filename={self.filename}, status={self.document_processing_status})>"
+
 class ProcessedEmailData(Base, TimestampMixin):
     """Processed and structured data extracted from emails"""
     __tablename__ = "processed_email_data"
@@ -266,7 +328,7 @@ class ProcessedEmailData(Base, TimestampMixin):
 
     # Document details
     document_type = Column(String, nullable=False)
-    title = Column(String(255), nullable=False)
+    title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     document_number = Column(String(100), nullable=True)
     reference_id = Column(String(100), nullable=True)

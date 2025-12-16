@@ -1,27 +1,26 @@
 import requests
 import urllib.parse
 from fastapi import Request
-import os
-from dotenv import load_dotenv
 from typing import Optional, List
 import httpx
+import json
+import base64
 
 from requests import Session
 
+from app.core.config import settings
 from app.models.models import User
 from app.services.jwt_service import JwtService
 from app.services.subscription_service import SubscriptionService
 from app.models.integration_schemas import SubscriptionCreationSchema
 from app.utils.exceptions import AuthenticationError
 
-load_dotenv()
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = f"{os.getenv('HOST_URL')}/api/emails/oauth2callback"
-
-# Gmail Integration OAuth (separate from login)
-GMAIL_INTEGRATION_REDIRECT_URI = f"{os.getenv('HOST_URL')}/api/integration/gmail/callback"
+# Use settings from centralized config
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
+REDIRECT_URI = settings.OAUTH_REDIRECT_URI
+GMAIL_INTEGRATION_REDIRECT_URI = settings.GMAIL_INTEGRATION_REDIRECT_URI
 
 LOGIN_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
@@ -84,9 +83,6 @@ def generate_gmail_integration_auth_url() -> str:
 
 def generate_gmail_integration_auth_url_with_state(user_id: int) -> str:
     """Generate auth URL with user_id encoded in state parameter"""
-    import json
-    import base64
-    
     # Validate required environment variables
     if not GOOGLE_CLIENT_ID:
         raise ValueError("GOOGLE_CLIENT_ID environment variable is required")
@@ -115,9 +111,6 @@ def generate_gmail_integration_auth_url_with_state(user_id: int) -> str:
 
 def decode_oauth_state(state: str) -> dict:
     """Decode the state parameter to extract user_id"""
-    import json
-    import base64
-    
     try:
         state_json = base64.urlsafe_b64decode(state.encode()).decode()
         return json.loads(state_json)

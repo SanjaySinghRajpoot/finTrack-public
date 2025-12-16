@@ -66,16 +66,6 @@ class FeatureService:
         integration: Integration, 
         feature_key: str
     ) -> Optional[Tuple[IntegrationFeature, Feature]]:
-        """
-        Find a specific feature in an integration by feature key.
-        
-        Args:
-            integration: Integration object
-            feature_key: Key of the feature to find
-            
-        Returns:
-            Tuple of (IntegrationFeature, Feature) if found, None otherwise
-        """
         for int_feat in integration.integration_features:
             if int_feat.feature.feature_key == feature_key and int_feat.is_enabled:
                 return int_feat, int_feat.feature
@@ -90,20 +80,6 @@ class FeatureService:
         target_feature: Feature,
         db_service: DBService
     ) -> FeatureAvailabilitySchema:
-        """
-        Create a feature availability schema for a user.
-        
-        Args:
-            user_id: ID of the user
-            integration_slug: Slug of the integration
-            feature_key: Key of the feature
-            int_feature: IntegrationFeature object
-            target_feature: Feature object
-            db_service: Database service for checking user permissions
-            
-        Returns:
-            FeatureAvailabilitySchema object
-        """
         can_use, reason = db_service.can_use_feature(user_id, feature_key)
         
         return FeatureAvailabilitySchema(
@@ -122,16 +98,6 @@ class FeatureService:
         int_feature: IntegrationFeature,
         feature: Feature
     ) -> FeatureSchema:
-        """
-        Create a FeatureSchema from IntegrationFeature and Feature objects.
-        
-        Args:
-            int_feature: The IntegrationFeature object
-            feature: The Feature object
-            
-        Returns:
-            FeatureSchema object
-        """
         return FeatureSchema(
             feature_id=feature.id,
             feature_key=feature.feature_key,

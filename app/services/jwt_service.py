@@ -1,17 +1,19 @@
 import jwt
-import os
 import datetime
 
+from app.core.config import settings
 
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRY_MINUTES = int(os.getenv("JWT_EXPIRY_MINUTES", "1440"))
 
 class JwtService:
-    def __init__(self, secret: str = JWT_SECRET, algorithm: str = JWT_ALGORITHM, expiry_minutes: int = JWT_EXPIRY_MINUTES):
-        self.secret = secret
-        self.algorithm = algorithm
-        self.expiry_minutes = expiry_minutes
+    def __init__(
+        self, 
+        secret: str = None, 
+        algorithm: str = None, 
+        expiry_minutes: int = None
+    ):
+        self.secret = secret or settings.JWT_SECRET
+        self.algorithm = algorithm or settings.JWT_ALGORITHM
+        self.expiry_minutes = expiry_minutes or settings.JWT_EXPIRY_MINUTES
 
     def create_token(self, user_id: int, email: str):
         payload = {

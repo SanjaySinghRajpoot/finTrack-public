@@ -1,20 +1,85 @@
+"""
+DB Service Module - Facade for backward-compatible database operations.
+Delegates to specialized repositories internally.
+"""
+
 import types
-from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional, Tuple, Any, Dict
 
-from requests import Session
-from sqlalchemy import text
-from sqlalchemy.orm import defer, joinedload, selectinload
+from sqlalchemy.orm import Session
 
-from app.models.models import Attachment, Email, ProcessedEmailData, Expense, User, IntegrationStatus, \
-    EmailConfig, IntegrationState, Subscription, Feature, Plan, PlanFeature, Integration, IntegrationFeature
+from app.models.models import (
+    Attachment, Email, ProcessedEmailData, Expense, User, 
+    IntegrationStatus, Feature, Integration, IntegrationFeature
+)
 from app.utils.utils import DuplicateCheckResult
+from app.repositories import (
+    EmailRepository,
+    AttachmentRepository,
+    UserRepository,
+    ExpenseRepository,
+    IntegrationRepository,
+    SubscriptionRepository,
+    DocumentRepository,
+)
+
 
 class DBService:
+
     def __init__(self, db_session: Session):
         if isinstance(db_session, types.GeneratorType):
             db_session = next(db_session)
         self.db: Session = db_session
+        
+        self._email_repo: Optional[EmailRepository] = None
+        self._attachment_repo: Optional[AttachmentRepository] = None
+        self._user_repo: Optional[UserRepository] = None
+        self._expense_repo: Optional[ExpenseRepository] = None
+        self._integration_repo: Optional[IntegrationRepository] = None
+        self._subscription_repo: Optional[SubscriptionRepository] = None
+        self._document_repo: Optional[DocumentRepository] = None
+
+    @property
+    def email_repo(self) -> EmailRepository:
+        if self._email_repo is None:
+            self._email_repo = EmailRepository(self.db)
+        return self._email_repo
+
+    @property
+    def attachment_repo(self) -> AttachmentRepository:
+        if self._attachment_repo is None:
+            self._attachment_repo = AttachmentRepository(self.db)
+        return self._attachment_repo
+
+    @property
+    def user_repo(self) -> UserRepository:
+        if self._user_repo is None:
+            self._user_repo = UserRepository(self.db)
+        return self._user_repo
+
+    @property
+    def expense_repo(self) -> ExpenseRepository:
+        if self._expense_repo is None:
+            self._expense_repo = ExpenseRepository(self.db)
+        return self._expense_repo
+
+    @property
+    def integration_repo(self) -> IntegrationRepository:
+        if self._integration_repo is None:
+            self._integration_repo = IntegrationRepository(self.db)
+        return self._integration_repo
+
+    @property
+    def subscription_repo(self) -> SubscriptionRepository:
+        if self._subscription_repo is None:
+            self._subscription_repo = SubscriptionRepository(self.db)
+        return self._subscription_repo
+
+    @property
+    def document_repo(self) -> DocumentRepository:
+        if self._document_repo is None:
+            self._document_repo = DocumentRepository(self.db)
+        return self._document_repo
 
     def add(self, obj):
         try:
@@ -23,6 +88,7 @@ class DBService:
             self.db.refresh(obj)
             return obj
         except Exception as e:
+            self.db.rollback()
             raise e
 
     def flush(self):
@@ -33,7 +99,6 @@ class DBService:
             raise e
 
     def commit(self):
-        """Simple commit wrapper with rollback on error."""
         try:
             self.db.commit()
         except Exception as e:
@@ -42,590 +107,141 @@ class DBService:
 
     def update(self, obj):
         try:
-            # self.db.merge(obj)  # merges state of 'obj' into the current session
             self.db.commit()
             self.db.refresh(obj)
             return obj
         except Exception as e:
-            self.db.rollback()  # rollback to maintain DB integrity
+            self.db.rollback()
             raise e
 
-    def get_attachment_by_id(self, attachment_id: str):
-        return self.db.query(Attachment).filter_by(id=attachment_id).first()
+    def get_email_by_id(self, msg_id) -> Optional[Email]:
+        return self.email_repo.get_by_gmail_message_id(msg_id)
 
-    def save_attachment(self, attachment: Attachment):
-        self.add(attachment)
+    def get_email_by_pk(self, email_id: int) -> Optional[Email]:
+        return self.email_repo.get_by_id(email_id)
 
-    def save_proccessed_email_data(self, processed_email_data: ProcessedEmailData):
-
-        existing = (
-            self.db.query(ProcessedEmailData)
-            .filter_by(source_id=processed_email_data.source_id)
-            .first()
-        )
-
-        # If not found, add it to the DB
-        if not existing:
-            self.add(processed_email_data)
+    def get_email_by_source_id(self, source_id: int) -> Optional[Email]:
+        return self.email_repo.get_by_source_id(source_id)
 
     def get_not_processed_mails(self) -> List[Email]:
-        try:
-            return self.db.query(Email).filter_by(is_processed=False).all()
-        except Exception as e:
-            raise e
+        return self.email_repo.get_unprocessed()
 
-    def update_email_status(self, email_ids: list[int]):
-        try:
-            if not email_ids:
-                return
+    def update_email_status(self, email_ids: List[int]) -> None:
+        self.email_repo.mark_as_processed(email_ids)
 
-            query = text("""
-                UPDATE emails
-                SET is_processed = TRUE
-                WHERE id = ANY(:email_ids)
-            """)
+    def get_attachment_by_id(self, attachment_id: str) -> Optional[Attachment]:
+        return self.attachment_repo.get_by_id(attachment_id)
 
-            self.db.execute(query, {"email_ids": email_ids})
-            self.db.commit()
+    def save_attachment(self, attachment: Attachment) -> Attachment:
+        return self.attachment_repo.add(attachment)
 
-        except Exception as e:
-            self.db.rollback()
-            raise e
+    def get_attachement_data(self, source_id: int) -> Optional[Attachment]:
+        return self.attachment_repo.get_by_source_id(source_id)
 
-    def get_processed_data(self, user_id: int, limit: int, offset: int):
-        try:
-            # Query ProcessedEmailData with eager loading of related data
-            query = (
-                self.db.query(ProcessedEmailData)
-                .filter(
-                    ProcessedEmailData.user_id == user_id,
-                    ProcessedEmailData.is_imported == False
-                )
-                .options(
-                    # Eager load processed items
-                    selectinload(ProcessedEmailData.processed_items),
-                    # Eager load attachment relationship
-                    joinedload(ProcessedEmailData.attachment),
-                    # Eager load source for additional context
-                    joinedload(ProcessedEmailData.source)
-                )
-                .offset(offset)
-                .limit(limit)
-            )
+    def get_attachments_by_source_id(self, source_id: int) -> List[Attachment]:
+        return self.attachment_repo.get_all_by_source_id(source_id)
 
-            results = query.all()
+    def get_attachments_by_email_id(self, email_id: int) -> List[Attachment]:
+        email = self.email_repo.get_by_id(email_id)
+        if not email or not email.source_id:
+            return []
+        return self.attachment_repo.get_all_by_source_id(email.source_id)
 
-            # Total count for pagination metadata
-            total_count = (
-                self.db.query(ProcessedEmailData)
-                .filter(
-                    ProcessedEmailData.user_id == user_id,
-                    ProcessedEmailData.is_imported == False
-                )
-                .count()
-            )
+    def check_duplicate_file_by_hash(self, file_hash: str, user_id: int = None) -> DuplicateCheckResult:
+        return self.attachment_repo.check_duplicate_by_hash(file_hash, user_id)
 
-            return {
-                "data": results,
-                "pagination": {
-                    "total": total_count,
-                    "limit": limit,
-                    "offset": offset,
-                    "has_more": offset + limit < total_count
-                }
-            }
-        except Exception as e:
-            raise e
+    def get_attachment_by_hash(self, file_hash: str) -> Optional[Attachment]:
+        return self.attachment_repo.get_by_file_hash(file_hash)
 
+    def save_attachment_with_hash(self, attachment: Attachment, file_hash: str) -> Attachment:
+        return self.attachment_repo.save_with_hash(attachment, file_hash)
 
-    def get_email_by_id(self, msg_id):
-        return self.db.query(Email).filter_by(gmail_message_id=msg_id).first()
+    def update_attachment_text(self, attachment_id: int, extracted_text: str) -> Optional[Attachment]:
+        return self.attachment_repo.update_extracted_text(attachment_id, extracted_text)
 
-    def get_email_by_pk(self, email_id: int):
-        """Get email by primary key ID"""
-        return self.db.query(Email).filter_by(id=email_id).first()
-    
-    def get_email_by_source_id(self, source_id: int):
-        """Get email by source_id"""
-        return self.db.query(Email).filter_by(source_id=source_id).first()
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        return self.user_repo.get_by_id(user_id)
 
-    def get_user_id_from_integration_status(self):
-        results = (
-            self.db.query(
-                IntegrationStatus.user_id,
-                IntegrationStatus.id
-            )
-            .filter(IntegrationStatus.status == IntegrationState.connected.value)
-            .order_by(IntegrationStatus.created_at)
-            .all()
-        )
-        return [(row.user_id, row.id) for row in results]
+    def update_user_details(self, user_id: int, updated_details: dict) -> Optional[User]:
+        return self.user_repo.update_details(user_id, updated_details)
+
+    def get_user_integrations(self, user_id: int) -> List[IntegrationStatus]:
+        return self.integration_repo.get_user_integrations(user_id)
+
+    def create_expense(self, expense: Expense) -> Expense:
+        return self.expense_repo.add(expense)
+
+    def list_expenses(self, user_id: int, limit: int, offset: int) -> Dict[str, Any]:
+        return self.expense_repo.list_for_user(user_id, limit, offset)
+
+    def get_expense(self, expense_uuid: str, user_id: int) -> Optional[Expense]:
+        return self.expense_repo.get_by_uuid(expense_uuid, user_id)
+
+    def update_expense(self, expense: Expense, data: dict) -> Expense:
+        return self.expense_repo.update_expense(expense, data)
+
+    def soft_delete_expense(self, expense: Expense) -> Expense:
+        return self.expense_repo.soft_delete_expense(expense)
+
+    def get_user_id_from_integration_status(self) -> List[Tuple[int, str]]:
+        return self.integration_repo.get_connected_integrations()
 
     def update_sync_data(self, integration_id: str) -> None:
-        try:
-            now = datetime.utcnow()
-
-            # Fetch the integration record
-            integration_status = (
-                self.db.query(IntegrationStatus)
-                .filter(IntegrationStatus.id == integration_id)
-                .first()
-            )
-
-            if not integration_status:
-                raise ValueError(f"Integration with ID {integration_id} not found")
-
-            # Calculate next sync time and duration (example: 24 hours = 1440 minutes)
-            integration_status.last_synced_at = now
-            integration_status.next_sync_at = now + timedelta(minutes=integration_status.sync_interval_minutes)
-            integration_status.last_sync_duration = (integration_status.sync_interval_minutes or 0) * 60
-            integration_status.total_syncs = (integration_status.total_syncs or 0) + 1
-
-            self.db.commit()
-
-        except Exception as e:
-            self.db.rollback()
-            raise e
+        self.integration_repo.update_sync_data(integration_id)
 
     def get_expired_token_user_ids(self) -> List[int]:
-        """As all the tokens will expire in 1 hour"""
-        # Join EmailConfig with IntegrationStatus to get user_ids directly
-        user_ids = (
-            self.db.query(IntegrationStatus.user_id)
-            .join(EmailConfig, IntegrationStatus.id == EmailConfig.integration_id)
-            .all()
-        )
+        return self.integration_repo.get_expired_token_user_ids()
 
-        return [uid for (uid,) in user_ids]
+    def get_integration_by_slug(self, slug: str) -> Optional[Integration]:
+        return self.integration_repo.get_master_by_slug(slug)
 
-    # ---------------------- Expense Operations -----------------------------
+    def get_integration_features(self, integration_id: int) -> List[Tuple[IntegrationFeature, Feature]]:
+        return self.integration_repo.get_integration_features(integration_id)
 
-    def create_expense(self, expense: Expense):
-        try:
-            self.db.add(expense)
-            self.db.commit()
-            self.db.refresh(expense)
-            return expense
-        except Exception as e:
-            self.db.rollback()
-            raise e
+    def link_user_integration_to_master(self, user_integration_id: str, integration_master_id: int) -> Optional[IntegrationStatus]:
+        return self.integration_repo.link_to_master(user_integration_id, integration_master_id)
 
-    def list_expenses(self, user_id: int, limit: int, offset: int):
-        try:
-            query = (
-                self.db.query(Expense)
-                .options(
-                    joinedload(Expense.processed_data).joinedload(ProcessedEmailData.attachment),
-                    joinedload(Expense.processed_data).selectinload(ProcessedEmailData.processed_items)
-                )
-                .filter(
-                    Expense.user_id == user_id,
-                    Expense.deleted_at.is_(None)
-                )
-                .offset(offset)
-                .limit(limit)
-            )
-
-            expenses = query.all()
-
-            # Optional: total count for pagination metadata
-            total_count = (
-                self.db.query(Expense)
-                .filter(
-                    Expense.user_id == user_id,
-                    Expense.deleted_at.is_(None)
-                )
-                .count()
-            )
-
-            return {
-                "data": expenses,
-                "pagination": {
-                    "total": total_count,
-                    "limit": limit,
-                    "offset": offset,
-                    "has_more": offset + limit < total_count
-                }
-            }
-
-        except Exception as e:
-            # You can log the error here if needed
-            return {"error": str(e)}
-
-
-    def get_expense(self, expense_uuid: str, user_id: int):
-        try:
-            return self.db.query(Expense).filter(
-                Expense.uuid == expense_uuid,
-                Expense.user_id == user_id,
-                Expense.deleted_at.is_(None)
-            ).first()
-        except Exception as e:
-            # Log the actual error for debugging but don't expose it to user
-            print(f"Database error in get_expense: {str(e)}")
-            from app.utils.exceptions import DatabaseError
-            raise DatabaseError("Failed to retrieve expense")
-
-    def update_expense(self, expense: Expense, data: dict):
-        for key, value in data.items():
-            if hasattr(expense, key) and value is not None:
-                setattr(expense, key, value)
-        expense.updated_at = datetime.utcnow()
-        self.db.commit()
-        self.db.refresh(expense)
-        return expense
-
-    def soft_delete_expense(self, expense: Expense):
-        try:
-            expense.deleted_at = datetime.utcnow()
-            self.db.commit()
-            self.db.refresh(expense)
-            return expense
-        except Exception as e:
-            self.db.rollback()
-            # Log the actual error for debugging but don't expose it to user
-            print(f"Database error in soft_delete_expense: {str(e)}")
-            from app.utils.exceptions import DatabaseError
-            raise DatabaseError("Failed to delete expense")
-
-    def import_processed_data(self, processed_data_id: int):
-        try:
-            data = (
-                self.db.query(ProcessedEmailData)
-                .filter(ProcessedEmailData.id == processed_data_id)
-                .first()
-            )
-
-            if not data:
-                raise ValueError(f"Processed data with ID {processed_data_id} not found")
-
-            data.is_imported = True
-            data.updated_at = datetime.utcnow()  # optional
-
-            self.add(data)
-        except Exception as e:
-            self.db.rollback()
-            print(f"Error updating processed data: {e}")
-            raise e  # Re-raise so higher layers can handle/log it
-
-    def get_processed_data_by_id(self, processed_data_id: int) -> ProcessedEmailData:
-        """Get ProcessedEmailData by ID"""
-        try:
-            return (
-                self.db.query(ProcessedEmailData)
-                .filter(ProcessedEmailData.id == processed_data_id)
-                .first()
-            )
-        except Exception as e:
-            raise e
-
-    # ------------------- Attachment Queries -------------
-
-    def get_attachement_data(self, source_id) -> Attachment:
-        try:
-            return self.db.query(Attachment).filter(Attachment.source_id == source_id).first()
-        except Exception as e:
-            raise e
-
-    def get_attachments_by_email_id(self, email_id) -> List[Attachment]:
-        """Get attachments by email_id - finds source_id from email first"""
-        try:
-            email = self.get_email_by_pk(email_id)
-            if not email or not email.source_id:
-                return []
-            return self.db.query(Attachment).filter(Attachment.source_id == email.source_id).all()
-        except Exception as e:
-            raise e
-
-    def check_duplicate_file_by_hash(self, file_hash: str, user_id: int = None) -> 'DuplicateCheckResult':
-        """
-        Check if a file with the given hash already exists in the database.
-        
-        Args:
-            file_hash: SHA-256 hash of the file
-            user_id: Optional user ID to check for user-specific duplicates
-            
-        Returns:
-            DuplicateCheckResult: Result object indicating if duplicate exists
-        """
-        try:
-
-            query = self.db.query(Attachment).filter(Attachment.file_hash == file_hash, Attachment.user_id == user_id)
-
-            existing_attachment = query.first()
-            
-            if existing_attachment:
-                return DuplicateCheckResult(
-                    is_duplicate=True,
-                    existing_attachment_id=existing_attachment.id,
-                    existing_filename=existing_attachment.filename,
-                    existing_source_id=existing_attachment.source_id
-                )
-            else:
-                return DuplicateCheckResult(is_duplicate=False)
-                
-        except Exception as e:
-            raise e
-
-    def get_attachment_by_hash(self, file_hash: str) -> Attachment:
-        """Get attachment by file hash"""
-        try:
-            return self.db.query(Attachment).filter(Attachment.file_hash == file_hash).first()
-        except Exception as e:
-            raise e
-
-    def save_attachment_with_hash(self, attachment: Attachment, file_hash: str):
-        """Save attachment with file hash"""
-        try:
-            attachment.file_hash = file_hash
-            self.add(attachment)
-            return attachment
-        except Exception as e:
-            raise e
-
-    # ------------------ User Queries ---------------------
-    def get_user_by_id(self, user_id) -> User:
-        try:
-            return (
-                self.db.query(User)
-                .options(defer(User.password))  # ✅ only defer password column
-                .filter(User.id == user_id)
-                .first()
-            )
-        except Exception as e:
-            raise e
-
-    def get_user_integrations(self, user_id: int):
-        """
-        Fetch all integration details for a given user,
-        including EmailConfig and WhatsappConfig if applicable.
-        """
-        try:
-            return self.db.query(IntegrationStatus).options(
-                    joinedload(IntegrationStatus.email_config),
-                    joinedload(IntegrationStatus.whatsapp_config)
-                ).filter(IntegrationStatus.user_id == user_id).all()
-
-        except Exception as e:
-            raise e
-
-    def update_user_details(self, user_id, updated_details):
-        try:
-            user = self.get_user_by_id(user_id)
-            if user is None:
-                return
-
-            for key, value in updated_details.items():
-                if hasattr(user, key) and value is not None:
-                    setattr(user, key, value)
-            user.updated_at = datetime.utcnow()
-            self.db.commit()
-            self.db.refresh(user)
-
-        except Exception as e:
-            raise e
-
-    # ------------------- Subscription & Feature Queries ---------------------
     def get_user_subscription(self, user_id: int):
-        """
-        Get the active subscription for a user along with plan details.
-        """
-        try:
-            return (
-                self.db.query(Subscription)
-                .options(joinedload(Subscription.plan))
-                .filter(
-                    Subscription.user_id == user_id,
-                    Subscription.status.in_(['active', 'trial'])
-                )
-                .order_by(Subscription.created_at.desc())
-                .first()
-            )
-        except Exception as e:
-            raise e
+        return self.subscription_repo.get_active_subscription(user_id)
 
-    def get_all_features(self):
-        """
-        Get all active features with their credit costs.
-        """
-        try:
-            return (
-                self.db.query(Feature)
-                .filter(Feature.is_active == True)
-                .all()
-            )
-        except Exception as e:
-            raise e
+    def get_all_features(self) -> List[Feature]:
+        return self.subscription_repo.get_all_active_features()
+
+    def get_feature_by_key(self, feature_key: str) -> Optional[Feature]:
+        return self.subscription_repo.get_feature_by_key(feature_key)
 
     def get_plan_features(self, plan_id: int):
-        """
-        Get all features enabled for a specific plan.
-        """
-        try:
-            return (
-                self.db.query(PlanFeature, Feature)
-                .join(Feature, PlanFeature.feature_id == Feature.id)
-                .filter(
-                    PlanFeature.plan_id == plan_id,
-                    PlanFeature.is_enabled == True,
-                    Feature.is_active == True
-                )
-                .all()
-            )
-        except Exception as e:
-            raise e
+        return self.subscription_repo.get_plan_features(plan_id)
 
-    def can_use_feature(self, user_id: int, feature_key: str):
-        """
-        Check if a user can use a specific feature based on their subscription credits
-        and plan permissions.
-        """
-        try:
-            # Get user's active subscription
-            subscription = self.get_user_subscription(user_id)
-            if not subscription:
-                return False, "No active subscription found"
+    def can_use_feature(self, user_id: int, feature_key: str) -> Tuple[bool, str]:
+        return self.subscription_repo.can_use_feature(user_id, feature_key)
 
-            # Get the feature details
-            feature = (
-                self.db.query(Feature)
-                .filter(
-                    Feature.feature_key == feature_key,
-                    Feature.is_active == True
-                )
-                .first()
-            )
-            
-            if not feature:
-                return False, "Feature not found"
+    def save_proccessed_email_data(self, processed_email_data: ProcessedEmailData) -> Optional[ProcessedEmailData]:
+        return self.document_repo.save_processed_data(processed_email_data)
 
-            # Check if feature is enabled in user's plan
-            plan_feature = (
-                self.db.query(PlanFeature)
-                .filter(
-                    PlanFeature.plan_id == subscription.plan_id,
-                    PlanFeature.feature_id == feature.id,
-                    PlanFeature.is_enabled == True
-                )
-                .first()
-            )
+    def get_processed_data(self, user_id: int, limit: int, offset: int) -> Dict[str, Any]:
+        return self.document_repo.get_paginated_for_user(user_id, limit, offset)
 
-            if not plan_feature:
-                return False, "Feature not available in current plan"
+    def get_processed_data_by_id(self, processed_data_id: int) -> Optional[ProcessedEmailData]:
+        return self.document_repo.get_by_id(processed_data_id)
 
-            # Get the credit cost (use custom cost if set, otherwise default)
-            credit_cost = plan_feature.custom_credit_cost or feature.credit_cost
+    def import_processed_data(self, processed_data_id: int) -> None:
+        self.document_repo.mark_as_imported(processed_data_id)
 
-            # Check if user has enough credits
-            if subscription.credit_balance >= credit_cost:
-                return True, "Feature available"
-            else:
-                return False, f"Insufficient credits. Required: {credit_cost}, Available: {subscription.credit_balance}"
+    def save_processed_items(self, processed_email_id: int, items_data: list) -> None:
+        self.document_repo.save_processed_items(processed_email_id, items_data)
 
-        except Exception as e:
-            raise e
+    def get_pending_staged_documents(self, limit: int = 10):
+        return self.document_repo.get_pending_staged_documents(limit)
 
-    def get_feature_by_key(self, feature_key: str):
-        """
-        Get feature by its key.
-        """
-        try:
-            return (
-                self.db.query(Feature)
-                .filter(
-                    Feature.feature_key == feature_key,
-                    Feature.is_active == True
-                )
-                .first()
-            )
-        except Exception as e:
-            raise e
-
-    # ------------------- Processed Items Management ---------------------
-    def save_processed_items(self, processed_email_id: int, items_data: list):
-        """Save processed items for a given processed_email_data record"""
-        try:
-            from app.models.models import ProcessedItem
-            
-            if not items_data:
-                return
-                
-            for item_data in items_data:
-                processed_item = ProcessedItem(
-                    processed_email_id=processed_email_id,
-                    item_name=item_data.get("item_name"),
-                    item_code=item_data.get("item_code"),
-                    category=item_data.get("category"),
-                    quantity=item_data.get("quantity", 1.0),
-                    unit=item_data.get("unit"),
-                    rate=item_data.get("rate"),
-                    discount=item_data.get("discount", 0.0),
-                    tax_percent=item_data.get("tax_percent"),
-                    total_amount=item_data.get("total_amount"),
-                    currency=item_data.get("currency", "INR"),
-                    meta_data=item_data.get("meta_data")
-                )
-                self.db.add(processed_item)
-            
-            self.db.commit()
-            
-        except Exception as e:
-            self.db.rollback()
-            raise e
-
-    # ------------------- Integration Management Queries ---------------------
-    def get_integration_by_slug(self, slug: str):
-        """
-        Get integration master record by slug.
-        """
-        try:
-            return (
-                self.db.query(Integration)
-                .filter(
-                    Integration.slug == slug,
-                    Integration.is_active == True
-                )
-                .first()
-            )
-        except Exception as e:
-            raise e
-
-    def get_integration_features(self, integration_id: int):
-        """
-        Get all features linked to an integration.
-        """
-        try:
-            return (
-                self.db.query(IntegrationFeature, Feature)
-                .join(Feature, IntegrationFeature.feature_id == Feature.id)
-                .filter(
-                    IntegrationFeature.integration_id == integration_id,
-                    IntegrationFeature.is_enabled == True,
-                    Feature.is_active == True
-                )
-                .order_by(IntegrationFeature.execution_order.nullslast())
-                .all()
-            )
-        except Exception as e:
-            raise e
-
-    def link_user_integration_to_master(self, user_integration_id: str, integration_master_id: int):
-        """
-        Link a user's integration status to the master integration record.
-        """
-        try:
-            user_integration = (
-                self.db.query(IntegrationStatus)
-                .filter(IntegrationStatus.id == user_integration_id)
-                .first()
-            )
-            
-            if user_integration:
-                user_integration.integration_master_id = integration_master_id
-                self.db.commit()
-                return user_integration
-            
-            return None
-        except Exception as e:
-            self.db.rollback()
-            raise e
+    def update_staging_status(
+        self,
+        staging_id: int,
+        status: str,
+        error_message: str = None,
+        attempts: int = None,
+        metadata: dict = None
+    ):
+        return self.document_repo.update_staging_status(
+            staging_id, status, error_message, attempts, metadata
+        )

@@ -2,11 +2,13 @@ import base64
 import hashlib
 import io
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import PyPDF2
 from fastapi import UploadFile
@@ -150,18 +152,6 @@ class FileProcessor:
         return manual_upload
 
     def _get_source_from_manual_upload(self, manual_upload_id: int):
-        """
-        Retrieve the Source created by event handler for a ManualUpload.
-        
-        Args:
-            manual_upload_id: ID of the manual upload
-            
-        Returns:
-            Source: The source object
-            
-        Raises:
-            ProcessingError: If source not found
-        """
         from app.models.models import Source
         source = self.db_service.db.query(Source).filter(
             Source.type == "manual",
@@ -206,7 +196,7 @@ class FileProcessor:
             attachment_id=f"manual_{user_id}_{int(datetime.now().timestamp())}",
             filename=filename,
             mime_type=mime_type or self.DEFAULT_MIME_TYPE,
-            size=len(file_data),
+            size=len(file_data) if file_data else None,
             file_hash=file_hash,
             storage_path=None,
             s3_url=s3_key,
@@ -447,3 +437,237 @@ class FileProcessor:
         except Exception as e:
             self.logger.warning(f"Text extraction failed: {e}")
             return None
+
+
+class DocumentProcessor:
+    """
+    Handles document processing using OCR and LLM services.
+    Implements separation of concerns for document analysis.
+    """
+    
+    def __init__(self, db_service: DBService, user_id: int):
+        """
+        Initialize DocumentProcessor.
+        
+        Args:
+            db_service: Database service instance
+            user_id: ID of the user
+        """
+        self.db_service = db_service
+        self.user_id = user_id
+        self.logger = logging.getLogger(__name__)
+        
+    def _is_pdf(self, filename: str) -> bool:
+        """Check if file is a PDF."""
+        return filename.lower().endswith('.pdf')
+    
+    def _is_image(self, filename: str) -> bool:
+        """Check if file is an image."""
+        return filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+    
+    async def process_with_ocr(
+        self, 
+        file_data: bytes, 
+        filename: str, 
+        source_id: int, 
+        document_type: str
+    ) -> Optional[dict]:
+        """
+        Process document using OCR service.
+        
+        Args:
+            file_data: File content as bytes
+            filename: Name of the file
+            source_id: Source ID in database
+            document_type: Type of document
+            
+        Returns:
+            Optional[dict]: OCR result or None if OCR fails/unavailable
+        """
+        temp_file_path = None
+        try:
+            from app.services.ocr import OCRService
+            
+            ocr_service = OCRService(self.db_service.db)
+            
+            if not ocr_service.is_available():
+                self.logger.info("OCR service not available")
+                return None
+            
+            self.logger.info(f"Attempting OCR processing for {filename}")
+            
+            suffix = os.path.splitext(filename)[1]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                tmp_file.write(file_data)
+                temp_file_path = tmp_file.name
+            
+            ocr_result = await ocr_service.process_document(
+                file_path=temp_file_path,
+                filename=filename,
+                source_id=source_id,
+                user_id=self.user_id,
+                document_type=document_type.lower()
+            )
+            
+            if ocr_result:
+                self.logger.info(f"OCR processing successful for {filename}")
+                return ocr_result
+            else:
+                self.logger.warning(f"OCR processing failed for {filename}")
+                return None
+                
+        except Exception as e:
+            self.logger.warning(f"OCR processing error: {e}")
+            return None
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                    self.logger.debug(f"Cleaned up temporary file: {temp_file_path}")
+                except Exception as cleanup_error:
+                    self.logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
+    
+    async def process_pdf_with_llm(
+        self,
+        text_content: str,
+        source_id: int,
+        filename: str,
+        s3_key: str,
+        upload_notes: Optional[str] = None,
+        file_hash: Optional[str] = None
+    ) -> List[dict]:
+        try:
+            from app.services.llm_service import LLMService, DocumentProcessingRequest
+            
+            llm_service = LLMService(self.user_id, self.db_service)
+            
+            processing_request = DocumentProcessingRequest(
+                source_id=source_id,
+                user_id=self.user_id,
+                document_type="manual_upload",
+                text_content=text_content,
+                metadata={
+                    "filename": filename,
+                    "s3_key": s3_key,
+                    "upload_method": "web_upload",
+                    "upload_notes": upload_notes,
+                    "file_hash": file_hash
+                }
+            )
+            
+            results = llm_service.llm_manual_processing([processing_request])
+            self.logger.info(f"LLM PDF processing completed with {len(results)} results")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"LLM PDF processing failed: {e}")
+            return []
+    
+    async def process_image_with_llm(
+        self,
+        image_base64: str,
+        source_id: int,
+        filename: str,
+        s3_key: str,
+        mime_type: str,
+        upload_notes: Optional[str] = None,
+        file_hash: Optional[str] = None
+    ) -> List[dict]:
+        """
+        Process image document using LLM service.
+        
+        Args:
+            image_base64: Base64-encoded image data
+            source_id: Source ID in database
+            filename: Name of the file
+            s3_key: S3 storage key
+            mime_type: MIME type of the image
+            upload_notes: Optional upload notes
+            file_hash: Optional file hash
+            
+        Returns:
+            List[dict]: LLM processing results
+        """
+        try:
+            from app.services.llm_service import LLMService, DocumentProcessingRequest
+            
+            llm_service = LLMService(self.user_id, self.db_service)
+            
+            processing_request = DocumentProcessingRequest(
+                source_id=source_id,
+                user_id=self.user_id,
+                document_type="manual_upload",
+                image_base64=image_base64,
+                metadata={
+                    "filename": filename,
+                    "s3_key": s3_key,
+                    "upload_method": "web_upload",
+                    "upload_notes": upload_notes,
+                    "file_hash": file_hash,
+                    "mime_type": mime_type
+                }
+            )
+            
+            results = llm_service.llm_image_processing_batch([processing_request])
+            self.logger.info(f"LLM image processing completed with {len(results)} results")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"LLM image processing failed: {e}")
+            return []
+    
+    async def process_document(
+        self,
+        file_data: bytes,
+        filename: str,
+        source_id: int,
+        document_type: str,
+        text_content: Optional[str] = None,
+        s3_key: Optional[str] = None,
+        upload_notes: Optional[str] = None,
+        file_hash: Optional[str] = None
+    ) -> Tuple[bool, List[dict], str]:
+        ocr_success = False
+        processing_results = []
+        processing_method = "none"
+        
+        ocr_result = await self.process_with_ocr(
+            file_data=file_data,
+            filename=filename,
+            source_id=source_id,
+            document_type=document_type
+        )
+        
+        if ocr_result:
+            ocr_success = True
+            processing_results = [ocr_result]
+            processing_method = "ocr"
+            return ocr_success, processing_results, processing_method
+        
+        self.logger.info(f"Falling back to LLM processing for {filename}")
+        
+        if self._is_pdf(filename) and text_content:
+            processing_results = await self.process_pdf_with_llm(
+                text_content=text_content,
+                source_id=source_id,
+                filename=filename,
+                s3_key=s3_key or "",
+                upload_notes=upload_notes,
+                file_hash=file_hash
+            )
+            processing_method = "llm_pdf"
+            
+        elif self._is_image(filename):
+            image_base64 = base64.b64encode(file_data).decode("utf-8")
+            processing_results = await self.process_image_with_llm(
+                image_base64=image_base64,
+                source_id=source_id,
+                filename=filename,
+                s3_key=s3_key or "",
+                mime_type=FileProcessor.DEFAULT_MIME_TYPE,
+                upload_notes=upload_notes,
+                file_hash=file_hash
+            )
+            processing_method = "llm_image"
+        
+        return ocr_success, processing_results, processing_method

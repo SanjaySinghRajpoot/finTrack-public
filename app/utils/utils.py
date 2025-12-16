@@ -1,24 +1,23 @@
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
+from dateutil import parser
 import io
-import os
-from typing import Optional, Tuple
+from typing import Optional
 from fastapi import UploadFile
 
 import PyPDF2
+from app.core.config import settings
 from app.models.models import ProcessedEmailData
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from dotenv import load_dotenv
 
-load_dotenv()
 
 # Load client secrets from Google Cloud Console
 CLIENT_SECRETS_FILE = "credentials.json"
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-REDIRECT_URI = f"{os.getenv('HOST_URL', 'https://fintrack.rapidlabs.app')}/api/emails/oauth2callback"
+REDIRECT_URI = settings.OAUTH_REDIRECT_URI
 
 class GmailOAuth:
     """Handles OAuth flow for Gmail."""
@@ -50,16 +49,21 @@ def create_processed_email_data(user_id: int, source_id: int, email_id: int, dat
     :return: ProcessedEmailData instance
     """
     def parse_date(date_str):
-        if date_str:
-            return datetime.strptime(date_str, "%Y-%m-%d").date()
-        return None
+        try:
+            # Use dateutil.parser for flexible parsing
+            # dayfirst=False prioritizes month-first for ambiguous dates (US format)
+            # You can set dayfirst=True if you want day-first priority (European format)
+            parsed_date = parser.parse(date_str, dayfirst=False)
+            return parsed_date.date().strftime("%Y-%m-%d")
+        except (ValueError, parser.ParserError):
+            return None
 
     processed_data = ProcessedEmailData(
         user_id=user_id,
         source_id=source_id,  # Primary reference now
         email_id=email_id,    # Keep for backward compatibility
         document_type=data.get("document_type"),
-        title=data.get("title"),
+        title=data.get("title", "invoice"),
         description=data.get("description"),
         document_number=data.get("document_number"),
         reference_id=data.get("reference_id"),
@@ -178,17 +182,21 @@ class PDFTextExtractor:
 class DuplicateCheckResult:
     """Result of duplicate file check."""
     is_duplicate: bool
+    attachment_id: Optional[int] = None
     existing_attachment_id: Optional[int] = None
     existing_filename: Optional[str] = None
     existing_source_id: Optional[int] = None
+    manual_upload_id: Optional[int] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for API responses."""
         return {
             "is_duplicate": self.is_duplicate,
+            "attachment_id": self.attachment_id,
             "existing_attachment_id": self.existing_attachment_id,
             "existing_filename": self.existing_filename,
-            "existing_source_id": self.existing_source_id
+            "existing_source_id": self.existing_source_id,
+            "manual_upload_id": self.manual_upload_id
         }
 
 

@@ -9,6 +9,7 @@ import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseList } from "@/components/ExpenseList";
 import { TransactionDetailsModal } from "@/components/TransactionDetailsModal";
+import { FileUploadModal } from "@/components/FileUploadModal";
 import { DollarSign, TrendingDown, Calendar, TrendingUp, Plus, Receipt, Upload, Lightbulb, Target, PiggyBank, TrendingUpIcon, X, Mail, Sparkles, CheckCircle2, ArrowRight, FileText, PieChart, BarChart3, Clock } from "lucide-react";
 import { api, CreateExpenseRequest, Expense, ImportedExpense } from "@/lib/api";
 import { toast } from "sonner";
@@ -255,9 +256,7 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
 const DashboardAnalytics = () => {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<Expense | ImportedExpense | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -358,36 +357,6 @@ const DashboardAnalytics = () => {
     return now.toLocaleDateString('en-US', options);
   };
 
-  // Handle file upload
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-    }
-  };
-
-  const handleFileUpload = async () => {
-    if (!selectedFile) {
-      toast.error("Please select a file");
-      return;
-    }
-
-    setUploadingFile(true);
-    try {
-      // TODO: Implement actual file upload API call
-      await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate upload
-      toast.success("Invoice uploaded successfully");
-      setIsUploadDialogOpen(false);
-      setSelectedFile(null);
-      queryClient.invalidateQueries({ queryKey: ["expenses"] });
-      queryClient.invalidateQueries({ queryKey: ["importedExpenses"] });
-    } catch (error) {
-      toast.error("Failed to upload invoice");
-    } finally {
-      setUploadingFile(false);
-    }
-  };
-
   // Handle welcome screen close
   const handleCloseWelcomeScreen = () => {
     setShowWelcomeScreen(false);
@@ -479,49 +448,14 @@ const DashboardAnalytics = () => {
               </div>
             </div>
             <div className="flex gap-3 self-start">
-              <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button 
-                    variant="outline"
-                    className="shadow-sm hover:shadow-md transition-smooth border-primary/20 hover:border-primary/40"
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Invoice
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[500px]">
-                  <DialogHeader>
-                    <DialogTitle className="text-xl">Upload Invoice</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors">
-                      <input
-                        type="file"
-                        id="invoice-upload"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={handleFileSelect}
-                        className="hidden"
-                      />
-                      <label htmlFor="invoice-upload" className="cursor-pointer">
-                        <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                        <p className="text-sm font-medium text-foreground mb-1">
-                          {selectedFile ? selectedFile.name : "Click to upload or drag and drop"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          PDF, JPG, JPEG or PNG (MAX. 10MB)
-                        </p>
-                      </label>
-                    </div>
-                    <Button 
-                      onClick={handleFileUpload} 
-                      disabled={!selectedFile || uploadingFile}
-                      className="w-full"
-                    >
-                      {uploadingFile ? "Uploading..." : "Upload Invoice"}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <Button 
+                variant="outline"
+                className="shadow-sm hover:shadow-md transition-smooth border-primary/20 hover:border-primary/40"
+                onClick={() => setIsUploadModalOpen(true)}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload Invoice
+              </Button>
               
               <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogTrigger asChild>
@@ -860,6 +794,12 @@ const DashboardAnalytics = () => {
               setIsDetailsModalOpen(false);
               setSelectedTransaction(null);
             }}
+          />
+
+          {/* File Upload Modal */}
+          <FileUploadModal
+            isOpen={isUploadModalOpen}
+            onClose={() => setIsUploadModalOpen(false)}
           />
         </>
       )}
