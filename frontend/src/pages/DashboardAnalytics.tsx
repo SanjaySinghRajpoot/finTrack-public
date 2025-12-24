@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -6,15 +6,32 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatCardSkeleton } from "@/components/ui/stat-card-skeleton";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
-import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseList } from "@/components/ExpenseList";
-import { TransactionDetailsModal } from "@/components/TransactionDetailsModal";
-import { FileUploadModal } from "@/components/FileUploadModal";
 import { DollarSign, TrendingDown, Calendar, TrendingUp, Plus, Receipt, Upload, Lightbulb, Target, PiggyBank, TrendingUpIcon, X, Mail, Sparkles, CheckCircle2, ArrowRight, FileText, PieChart, BarChart3, Clock } from "lucide-react";
 import { api, CreateExpenseRequest, Expense, ImportedExpense } from "@/lib/api";
 import { toast } from "sonner";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { useNavigate } from "react-router-dom";
+
+// Lazy load heavy components - recharts is ~1.2MB!
+const SpendingChart = lazy(() => import("@/components/SpendingChart"));
+const ExpenseForm = lazy(() => import("@/components/ExpenseForm").then(m => ({ default: m.ExpenseForm })));
+const TransactionDetailsModal = lazy(() => import("@/components/TransactionDetailsModal").then(m => ({ default: m.TransactionDetailsModal })));
+const FileUploadModal = lazy(() => import("@/components/FileUploadModal").then(m => ({ default: m.FileUploadModal })));
+
+// Chart loading skeleton
+const ChartSkeleton = () => (
+  <div className="w-full h-[280px] bg-muted/30 rounded-lg animate-pulse flex items-center justify-center">
+    <BarChart3 className="h-12 w-12 text-muted-foreground/30" />
+  </div>
+);
+
+// Header skeleton for instant LCP
+const HeaderSkeleton = () => (
+  <div className="flex flex-col gap-2">
+    <div className="h-10 w-48 bg-muted/50 rounded-lg animate-pulse" />
+    <div className="h-6 w-64 bg-muted/30 rounded animate-pulse" />
+  </div>
+);
 
 // Welcome Screen Component for First-Time Users
 const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; onClose: () => void }) => {
@@ -266,22 +283,28 @@ const DashboardAnalytics = () => {
     return dismissed !== 'true';
   });
 
-  const { data: user } = useQuery({
+  // Fetch user data - lower priority, doesn't block render
+  const { data: user, isLoading: isUserLoading } = useQuery({
     queryKey: ["user"],
     queryFn: api.getUser,
     retry: false,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
+  // Fetch expenses - main data, higher priority
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["expenses"],
     queryFn: api.getExpenses,
     retry: false,
+    staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
+  // Fetch imported expenses - can load in background
   const { data: importedExpenses = [] } = useQuery({
     queryKey: ["importedExpenses"],
     queryFn: api.getImportedExpenses,
     retry: false,
+    staleTime: 30 * 1000,
   });
 
   // Create expense mutation
@@ -348,7 +371,7 @@ const DashboardAnalytics = () => {
 
   const getUserName = () => {
     if (user?.first_name) return user.first_name;
-    return "User";
+    return "there"; // Friendlier default
   };
 
   const getCurrentDate = () => {
@@ -437,16 +460,20 @@ const DashboardAnalytics = () => {
         />
       ) : (
         <>
-          {/* Header with Greeting, Date and Action Buttons */}
+          {/* Header with Greeting, Date and Action Buttons - Shows immediately with skeleton */}
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <div className="flex flex-col gap-2">
-              <div>
-                <h1 className="text-3xl md:text-4xl font-bold text-foreground">
-                  Hi, {getUserName()} 👋
-                </h1>
-                <p className="text-base md:text-lg text-muted-foreground mt-2">{getCurrentDate()}</p>
+            {isUserLoading ? (
+              <HeaderSkeleton />
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div>
+                  <h1 className="text-3xl md:text-4xl font-bold text-foreground">
+                    Hi, {getUserName()} 👋
+                  </h1>
+                  <p className="text-base md:text-lg text-muted-foreground mt-2">{getCurrentDate()}</p>
+                </div>
               </div>
-            </div>
+            )}
             <div className="flex gap-3 self-start">
               <Button 
                 variant="outline"
@@ -473,11 +500,13 @@ const DashboardAnalytics = () => {
                       {editingExpense ? "Edit Expense" : "Add New Expense"}
                     </DialogTitle>
                   </DialogHeader>
-                  <ExpenseForm
-                    onSubmit={handleSubmit}
-                    defaultValues={editingExpense || undefined}
-                    isLoading={createMutation.isPending || updateMutation.isPending}
-                  />
+                  <Suspense fallback={<div>Loading...</div>}>
+                    <ExpenseForm
+                      onSubmit={handleSubmit}
+                      defaultValues={editingExpense || undefined}
+                      isLoading={createMutation.isPending || updateMutation.isPending}
+                    />
+                  </Suspense>
                 </DialogContent>
               </Dialog>
             </div>
@@ -528,73 +557,9 @@ const DashboardAnalytics = () => {
                     <h3 className="text-sm font-semibold text-foreground mb-1">7-Day Spending Trend</h3>
                     <p className="text-xs text-muted-foreground">Track your daily expenses at a glance</p>
                   </div>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <AreaChart data={last7Days}>
-                      <defs>
-                        <linearGradient id="colorManual" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="rgb(59, 130, 246)" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="rgb(59, 130, 246)" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorImported" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="rgb(168, 85, 247)" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="rgb(168, 85, 247)" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
-                          <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-                      <XAxis 
-                        dataKey="day" 
-                        stroke="hsl(var(--muted-foreground))" 
-                        fontSize={12}
-                        tickLine={false}
-                      />
-                      <YAxis 
-                        stroke="hsl(var(--muted-foreground))" 
-                        fontSize={12}
-                        tickLine={false}
-                        tickFormatter={(value) => `${primaryCurrency} ${value}`}
-                      />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: 'hsl(var(--card))', 
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: '12px',
-                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                        }}
-                        formatter={(value: any) => [`${primaryCurrency} ${value.toFixed(2)}`, '']}
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="manual" 
-                        stroke="rgb(59, 130, 246)" 
-                        strokeWidth={2}
-                        fillOpacity={1} 
-                        fill="url(#colorManual)" 
-                        name="Manual"
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="imported" 
-                        stroke="rgb(168, 85, 247)" 
-                        strokeWidth={2}
-                        fillOpacity={1} 
-                        fill="url(#colorImported)" 
-                        name="Imported"
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="total" 
-                        stroke="hsl(var(--primary))" 
-                        strokeWidth={3}
-                        fillOpacity={1} 
-                        fill="url(#colorTotal)" 
-                        name="Total"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <Suspense fallback={<ChartSkeleton />}>
+                    <SpendingChart data={last7Days} primaryCurrency={primaryCurrency} />
+                  </Suspense>
                 </div>
 
                 {/* Top Categories */}
@@ -787,20 +752,24 @@ const DashboardAnalytics = () => {
           </div>
 
           {/* Transaction Details Modal */}
-          <TransactionDetailsModal
-            transaction={selectedTransaction}
-            isOpen={isDetailsModalOpen}
-            onClose={() => {
-              setIsDetailsModalOpen(false);
-              setSelectedTransaction(null);
-            }}
-          />
+          <Suspense fallback={<div>Loading...</div>}>
+            <TransactionDetailsModal
+              transaction={selectedTransaction}
+              isOpen={isDetailsModalOpen}
+              onClose={() => {
+                setIsDetailsModalOpen(false);
+                setSelectedTransaction(null);
+              }}
+            />
+          </Suspense>
 
           {/* File Upload Modal */}
-          <FileUploadModal
-            isOpen={isUploadModalOpen}
-            onClose={() => setIsUploadModalOpen(false)}
-          />
+          <Suspense fallback={<div>Loading...</div>}>
+            <FileUploadModal
+              isOpen={isUploadModalOpen}
+              onClose={() => setIsUploadModalOpen(false)}
+            />
+          </Suspense>
         </>
       )}
     </div>

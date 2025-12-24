@@ -81,8 +81,12 @@ class Settings(BaseSettings):
     # ==========================================================================
     OPENAI_API_KEY: Optional[str] = Field(default=None, description="OpenAI API Key for LLM services")
     OPENAI_BASE_URL: str = Field(
-        default="https://generativelanguage.googleapis.com/v1beta/openai/",
-        description="OpenAI API base URL (can be changed for different providers)"
+        default="http://localhost:1234/v1",
+        description="OpenAI API base URL (can be changed for different providers like LMStudio)"
+    )
+    LLM_MODEL: str = Field(
+        default="local-model",
+        description="LLM model name to use (e.g., 'local-model' for LMStudio, 'gemini-2.0-flash' for Gemini)"
     )
     
     # ==========================================================================

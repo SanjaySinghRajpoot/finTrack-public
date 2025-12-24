@@ -105,7 +105,9 @@ export interface ImportedExpense {
   file_url: string | null;
   title: string;
   currency: string;
-  meta_data: string[];
+  meta_data: {
+    custom_fields?: Record<string, any>;
+  } & Record<string, any>;
   description: string;
   is_paid: boolean;
   is_imported: boolean;
@@ -313,6 +315,103 @@ export interface FileMetadataResponse {
   data: ProcessedFileData[];
 }
 
+// Staging Documents Types
+export interface StagingDocument {
+  id: number;
+  uuid: string;
+  filename: string;
+  file_hash: string | null;
+  s3_key: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  document_type: string | null;
+  source_type: string;
+  upload_notes: string | null;
+  processing_status: string;
+  processing_attempts: number;
+  max_attempts: number;
+  error_message: string | null;
+  meta_data: Record<string, unknown> | null;
+  priority: number;
+  created_at: string | null;
+  updated_at: string | null;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
+  source: {
+    id: number;
+    type: string;
+    external_id: string | null;
+    created_at: string | null;
+  } | null;
+}
+
+export interface StagingDocumentsPagination {
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface StagingDocumentsResponse {
+  data: StagingDocument[];
+  pagination: StagingDocumentsPagination;
+}
+
+// Custom Schema Types
+export interface CustomFieldDefinition {
+  name: string;
+  label: string;
+  type: string; // 'string' | 'number' | 'date' | 'boolean' | 'select' | 'array'
+  required: boolean;
+  default_value?: unknown;
+  options?: string[];
+  description?: string;
+  order?: number;
+}
+
+export interface DefaultSchemaField {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  source: string; // 'default' or 'custom'
+  description?: string;
+}
+
+export interface CustomSchemaCreate {
+  fields: CustomFieldDefinition[];
+  schema_name?: string;
+  description?: string;
+  is_active?: boolean;
+}
+
+export interface CustomSchemaUpdate {
+  fields?: CustomFieldDefinition[];
+  schema_name?: string;
+  description?: string;
+  is_active?: boolean;
+}
+
+export interface CustomSchemaResponse {
+  id: number;
+  user_id: number;
+  fields: CustomFieldDefinition[];
+  schema_name: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FullSchemaResponse {
+  default_fields: DefaultSchemaField[];
+  custom_fields: CustomFieldDefinition[];
+  schema_name: string | null;
+  description: string | null;
+  is_active: boolean;
+  has_custom_schema: boolean;
+}
+
 export const api = {
   // Auth
   login: async () => {
@@ -496,6 +595,65 @@ export const api = {
       headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error('Failed to delink integration');
+    return response.json();
+  },
+
+  // Staging Documents
+  getStagingDocuments: async (
+    limit: number = 10,
+    offset: number = 0,
+    status?: string
+  ): Promise<StagingDocumentsResponse> => {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      offset: offset.toString(),
+    });
+    if (status) {
+      params.append('status', status);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/staging-documents?${params.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to fetch staging documents');
+    return response.json();
+  },
+
+  // Custom Schema
+  getDocumentSchema: async (): Promise<FullSchemaResponse> => {
+    const response = await fetch(`${API_BASE_URL}/schema`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to fetch document schema');
+    return response.json();
+  },
+
+  saveCustomSchema: async (data: CustomSchemaCreate): Promise<{ message: string; data: CustomSchemaResponse }> => {
+    const response = await fetch(`${API_BASE_URL}/schema/custom`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) throw new Error('Failed to save custom schema');
+    return response.json();
+  },
+
+  updateCustomSchema: async (data: CustomSchemaUpdate): Promise<{ message: string; data: CustomSchemaResponse }> => {
+    const response = await fetch(`${API_BASE_URL}/schema/custom`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) throw new Error('Failed to update custom schema');
+    return response.json();
+  },
+
+  deleteCustomSchema: async (): Promise<{ message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/schema/custom`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to delete custom schema');
     return response.json();
   },
 };

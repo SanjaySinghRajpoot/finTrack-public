@@ -14,7 +14,7 @@ import requests
 
 from app.core.config import settings
 from app.services.db_service import DBService
-from app.services.ocr_models import (
+from app.services.ocr.models import (
     ProcessedDocument,
     DocumentBatchRequest,
     DocumentBatchResponse,
@@ -22,16 +22,21 @@ from app.services.ocr_models import (
     LineItem,
 )
 from app.utils.utils import create_processed_email_data
-from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS
+from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS, build_schema_with_custom_fields
 from app.utils.json_validator import JSONValidator
 
 
 class OCRService:
 
-    def __init__(self, db: Session, api_key: Optional[str] = None):
+    def __init__(self, db: Session, user_id: int, api_key: Optional[str] = None):
         self.db = db
+        self.user_id = user_id
         self.logger = logging.getLogger(__name__)
-        self.validator = JSONValidator(DOCUMENT_SCHEMA, REQUIRED_FIELDS)
+        
+        # Build schema with user's custom fields
+        self.schema = build_schema_with_custom_fields(db, user_id)
+        self.validator = JSONValidator(self.schema, REQUIRED_FIELDS)
+        
         self.api_key = api_key or settings.NANONETS_API_KEY or settings.DOCSTRANGE_API_KEY
         if self.api_key:
             self.logger.info("OCR Service initialized for NanoNets (API key provided)")
@@ -53,8 +58,8 @@ class OCRService:
             # Build instructions combining caller instructions and schema-based guidance
             data = {
                 "output_format": "json",
-                # Pass the schema as a JSON string to help the extractor align outputs
-                "schema": json.dumps(DOCUMENT_SCHEMA) if DOCUMENT_SCHEMA else None,
+                # Pass the schema with custom fields as a JSON string to help the extractor align outputs
+                "schema": json.dumps(self.schema) if self.schema else None,
             }
             # Remove None values to avoid sending empty fields
             data = {k: v for k, v in data.items() if v is not None}

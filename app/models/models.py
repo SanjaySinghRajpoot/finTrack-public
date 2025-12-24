@@ -713,6 +713,28 @@ class CreditHistory(Base):
     def __repr__(self):
         return f"<CreditHistory(id={self.id}, action={self.action_type}, credits_used={self.credits_used})>"
 
+class CustomSchema(Base, TimestampMixin):
+    """User-defined custom fields for document schema"""
+    __tablename__ = "custom_schemas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    
+    # Custom fields stored as JSONB
+    # Example: [{"name": "project_code", "type": "string", "label": "Project Code", "required": false}, ...]
+    fields = Column(JSON, nullable=False, default=list)
+    
+    # Schema metadata
+    schema_name = Column(String(100), nullable=True, default="Default Schema")
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships
+    user = relationship("User", backref="custom_schema")
+
+    def __repr__(self):
+        return f"<CustomSchema(user_id={self.user_id}, fields_count={len(self.fields) if self.fields else 0})>"
+
 class IntegrationFeature(Base, TimestampMixin):
     """Junction table for integration-feature relationships"""
     __tablename__ = "integration_features"

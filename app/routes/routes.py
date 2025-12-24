@@ -5,7 +5,8 @@ from app.db_config import SessionLocal
 from app.middleware.auth_middleware import jwt_middleware
 from app.models.scheme import (
     TokenRequest, ExpenseCreate, ExpenseUpdate, UpdateUserDetailsPayload,
-    PresignedUrlRequest, FileMetadataRequest
+    PresignedUrlRequest, FileMetadataRequest, StagingDocumentsResponse,
+    CustomSchemaCreate, CustomSchemaUpdate, FullSchemaResponse
 )
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Query
 from app.controller import (
@@ -15,7 +16,8 @@ from app.controller import (
     ExpenseController,
     FileController,
     UserController,
-    IntegrationController
+    IntegrationController,
+    CustomSchemaController
 )
 from app.services.s3_service import S3Service
 
@@ -83,6 +85,21 @@ async def get_payment_info(user=Depends(jwt_middleware),
                      offset: int = Query(0, ge=0, description="Number of records to skip"),
                      ):
     return await ProcessedDataController.get_payment_info(user, db, limit, offset)
+
+
+@router.get("/staging-documents", response_model=StagingDocumentsResponse)
+async def get_staging_documents(
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100, description="Number of records per page"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    status: str = Query(None, description="Filter by processing status (pending, in_progress, completed, failed)")
+):
+    """
+    Get paginated list of staging documents for the authenticated user.
+    These are documents that are queued or being processed.
+    """
+    return await ProcessedDataController.get_staging_documents(user, db, limit, offset, status)
 
 
 # ----------- EXPENSE ROUTES -----------
@@ -202,3 +219,54 @@ async def delink_integration(
     Removes tokens and integration configuration.
     """
     return await IntegrationController.delink_integration(slug, user, db)
+
+
+# ----------- CUSTOM SCHEMA ROUTES -----------
+@router.get("/schema", response_model=FullSchemaResponse)
+async def get_document_schema(
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the full document schema including default and custom fields.
+    This endpoint returns all available columns/fields that can be displayed in tables.
+    """
+    return await CustomSchemaController.get_schema(user, db)
+
+
+@router.post("/schema/custom")
+async def save_custom_schema(
+    payload: CustomSchemaCreate,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Create or update custom schema fields for the authenticated user.
+    Custom fields will be added to the default schema fields.
+    """
+    return await CustomSchemaController.save_custom_schema(payload, user, db)
+
+
+@router.put("/schema/custom")
+async def update_custom_schema(
+    payload: CustomSchemaUpdate,
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Update existing custom schema fields.
+    Only provided fields will be updated.
+    """
+    return await CustomSchemaController.update_custom_schema(payload, user, db)
+
+
+@router.delete("/schema/custom")
+async def delete_custom_schema(
+    user=Depends(jwt_middleware),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete custom schema fields for the authenticated user.
+    This will reset to using only the default schema fields.
+    """
+    return await CustomSchemaController.delete_custom_schema(user, db)

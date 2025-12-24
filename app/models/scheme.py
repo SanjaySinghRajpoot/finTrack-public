@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from pydantic import BaseModel, constr, condecimal
-from typing import Optional
+from pydantic import BaseModel, constr, condecimal, Field
+from typing import Optional, List, Any
 
 class TokenRequest(BaseModel):
     access_token: str
@@ -122,3 +122,114 @@ class FileMetadataResponse(BaseModel):
     """Response model for file metadata processing"""
     message: str
     data: list[ProcessedFileData]
+
+# Staging Document Models
+class StagingDocumentSource(BaseModel):
+    """Source information for a staging document"""
+    id: int
+    type: str
+    external_id: Optional[str] = None
+    created_at: Optional[str] = None
+
+class StagingDocumentData(BaseModel):
+    """Data for a single staging document"""
+    id: int
+    uuid: str
+    filename: str
+    file_hash: Optional[str] = None
+    s3_key: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    document_type: Optional[str] = None
+    source_type: str
+    upload_notes: Optional[str] = None
+    processing_status: str
+    processing_attempts: int
+    max_attempts: int
+    error_message: Optional[str] = None
+    meta_data: Optional[dict] = None
+    priority: int
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    processing_started_at: Optional[str] = None
+    processing_completed_at: Optional[str] = None
+    source: Optional[StagingDocumentSource] = None
+
+class StagingDocumentsPagination(BaseModel):
+    """Pagination info for staging documents"""
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+class StagingDocumentsResponse(BaseModel):
+    """Response model for staging documents list"""
+    data: list[StagingDocumentData]
+    pagination: StagingDocumentsPagination
+
+
+# ================================================================================================
+# CUSTOM SCHEMA MODELS
+# ================================================================================================
+
+class CustomFieldDefinition(BaseModel):
+    """Definition of a single custom field"""
+    name: str = Field(..., min_length=1, max_length=100, description="Field identifier (snake_case)")
+    label: str = Field(..., min_length=1, max_length=100, description="Display label for the field")
+    type: str = Field(..., description="Field type: string, number, date, boolean, select")
+    required: bool = Field(default=False, description="Whether the field is required")
+    default_value: Optional[Any] = Field(default=None, description="Default value for the field")
+    options: Optional[List[str]] = Field(default=None, description="Options for select type fields")
+    description: Optional[str] = Field(default=None, max_length=500, description="Field description/help text")
+    order: Optional[int] = Field(default=0, description="Display order of the field")
+
+
+class CustomSchemaCreate(BaseModel):
+    """Request model for creating/updating custom schema"""
+    fields: List[CustomFieldDefinition] = Field(default_factory=list, description="List of custom field definitions")
+    schema_name: Optional[str] = Field(default="Default Schema", max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    is_active: bool = Field(default=True)
+
+
+class CustomSchemaUpdate(BaseModel):
+    """Request model for updating custom schema"""
+    fields: Optional[List[CustomFieldDefinition]] = None
+    schema_name: Optional[str] = Field(default=None, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class CustomSchemaResponse(BaseModel):
+    """Response model for custom schema"""
+    id: int
+    user_id: int
+    fields: List[CustomFieldDefinition]
+    schema_name: Optional[str]
+    description: Optional[str]
+    is_active: bool
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class DefaultSchemaField(BaseModel):
+    """Default schema field definition"""
+    name: str
+    label: str
+    type: str
+    required: bool
+    source: str = "default"  # "default" or "custom"
+    description: Optional[str] = None
+
+
+class FullSchemaResponse(BaseModel):
+    """Response model containing both default and custom schema fields"""
+    default_fields: List[DefaultSchemaField]
+    custom_fields: List[CustomFieldDefinition]
+    schema_name: Optional[str]
+    description: Optional[str]
+    is_active: bool
+    has_custom_schema: bool

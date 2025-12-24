@@ -4,6 +4,7 @@ from starlette.responses import JSONResponse
 from app.constants.integration_constants import FeatureKey
 from app.services.s3_service import S3Service
 from app.services.db_service import DBService
+from app.services.file_service import FileService  # Import FileService
 from app.models.scheme import UploadSuccessResponse, UploadSuccessData, UploadErrorResponse
 from app.utils.exceptions import NotFoundError, ExternalServiceError, DatabaseError
 from app.utils.decorators import deduct_credits
@@ -181,8 +182,6 @@ class FileController:
                 document_staging = DocumentStaging(
                     user_id=user_id,
                     source_id=source.id,
-                    attachment_id=attachment.id,
-                    manual_upload_id=manual_upload.id,
                     filename=file_meta.filename,
                     file_hash=file_meta.file_hash,
                     s3_key=file_meta.s3_key,
@@ -232,18 +231,18 @@ class FileController:
         try:
             from app.services.file_service import FileProcessor, FileHashUtils, DocumentProcessor
             
-            allowed_extensions = {'.pdf', '.jpg', '.jpeg', '.png', '.webp'}
-            file_extension = file.filename.lower()
-            
-            if not any(file_extension.endswith(ext) for ext in allowed_extensions):
-                error_response = UploadErrorResponse(error="Only PDF and image files (JPG, PNG, WEBP) are supported")
+            file_service = FileService() # Instantiate FileService
+
+            # Validate file type using FileService
+            if not file_service._is_supported_file(file.filename):
+                error_response = UploadErrorResponse(error=f"Only PDF and image files (JPG, PNG, WEBP) are supported. Unsupported type: {file_service._get_file_extension(file.filename)}")
                 return JSONResponse(
                     status_code=400, 
                     content=error_response.dict()
                 )
             
-            is_pdf = file_extension.endswith('.pdf')
-            is_image = file_extension.endswith(('.jpg', '.jpeg', '.png', '.webp'))
+            is_pdf = file_service._get_file_extension(file.filename) == 'pdf'
+            is_image = file_service._get_file_extension(file.filename) in {'jpg', 'jpeg', 'png', 'webp'}
             
             MAX_FILE_SIZE = 10 * 1024 * 1024
             file_content = await file.read()

@@ -299,6 +299,7 @@ class DocumentStagingProcessorCron(BaseCronJob):
         Handles both attachment-based and content-based emails.
         Fetches all data using source_id from the Source table.
         """
+        # update and test this function once for the batch processing -> need testing here
         try:
             processed_emails = []
             
@@ -473,9 +474,11 @@ class DocumentStagingProcessorCron(BaseCronJob):
                     file_processor = FileProcessor(db_service, doc.user_id)
                     text_content = file_processor.extract_text(file_data)
 
-                    # Update attachment with extracted text
-                    if text_content and doc.attachment_id:
-                        db_service.update_attachment_text(doc.attachment_id, text_content)
+                    # Update attachment with extracted text using source_id
+                    if text_content:
+                        attachments = db_service.get_attachments_by_source_id(doc.source_id)
+                        if attachments:
+                            db_service.update_attachment_text(attachments[0].id, text_content)
 
                 # Process document
                 ocr_success, processing_results, processing_method = await document_processor.process_document(

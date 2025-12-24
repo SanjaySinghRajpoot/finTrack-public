@@ -10,6 +10,7 @@ from app.repositories.expense_repository import ExpenseRepository
 from app.repositories.integration_repository import IntegrationRepository
 from app.repositories.subscription_repository import SubscriptionRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.custom_schema_repository import CustomSchemaRepository
 
 __all__ = [
     'BaseRepository',
@@ -20,4 +21,5 @@ __all__ = [
     'IntegrationRepository',
     'SubscriptionRepository',
     'DocumentRepository',
+    'CustomSchemaRepository',
 ]

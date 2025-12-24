@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Home, Receipt, Settings, User, LogOut, Menu, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Home, Receipt, Settings, User, LogOut, Menu, Sparkles, FolderOpen, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
@@ -7,15 +8,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { api } from "@/lib/api";
-import { useAppSelector } from "@/store/hooks";
 
 const navItems = [
   { title: "Dashboard", icon: Home, path: "/" },
   { title: "Transactions", icon: Receipt, path: "/transactions" },
+  { title: "Files", icon: FolderOpen, path: "/files" },
   { title: "Profile", icon: User, path: "/profile" },
   { title: "Settings", icon: Settings, path: "/settings" },
 ];
@@ -28,7 +30,14 @@ interface SidebarProps {
 export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
-  const userEmail = useAppSelector((state) => state.user.email);
+
+  // Fetch user data
+  const { data: user, isLoading: isUserLoading } = useQuery({
+    queryKey: ["user"],
+    queryFn: api.getUser,
+    retry: false,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
 
   const handleLogout = () => {
     api.logout();
@@ -36,8 +45,16 @@ export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
   };
 
   const getInitials = () => {
-    if (!userEmail) return "U";
-    return userEmail.charAt(0).toUpperCase();
+    if (!user) return "U";
+    const firstInitial = user.first_name?.[0] || '';
+    const lastInitial = user.last_name?.[0] || '';
+    return (firstInitial + lastInitial).toUpperCase() || user.email[0].toUpperCase();
+  };
+
+  const getFullName = () => {
+    if (!user) return "User";
+    const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+    return fullName || user.email.split("@")[0];
   };
 
   return (
@@ -114,28 +131,65 @@ export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
             <DropdownMenuTrigger asChild>
               <Button 
                 variant="ghost" 
-                className="w-full h-auto p-2 hover:bg-muted flex items-center justify-center"
+                className={cn(
+                  "w-full h-auto p-2 hover:bg-muted flex items-center gap-3",
+                  collapsed ? "justify-center" : "justify-start"
+                )}
               >
-                <Avatar className="h-10 w-10 bg-primary border-2 border-primary/20">
+                <Avatar className="h-10 w-10 border-2 border-primary/20 shrink-0">
+                  {user?.profile_image ? (
+                    <AvatarImage
+                      src={user.profile_image}
+                      alt={getFullName()}
+                      className="object-cover"
+                      onError={(e) => {
+                        // Hide broken image and show fallback
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  ) : null}
                   <AvatarFallback className="bg-primary text-primary-foreground font-semibold">
-                      <User className="h-5 w-5 text-primary-foreground" />
+                    {isUserLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      getInitials()
+                    )}
                   </AvatarFallback>
                 </Avatar>
+                {!collapsed && (
+                  <div className="flex flex-col items-start overflow-hidden">
+                    <span className="text-sm font-medium text-foreground truncate w-full text-left">
+                      {isUserLoading ? "Loading..." : getFullName()}
+                    </span>
+                    <span className="text-xs text-muted-foreground truncate w-full text-left">
+                      {user?.email || ""}
+                    </span>
+                  </div>
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" className="w-56 bg-card border-border shadow-lg mb-2">
-              <div className="px-2 py-2 border-b border-border">
-                <p className="text-sm font-medium text-foreground truncate">
-                  {userEmail || "User"}
-                </p>
-              </div>
+              {/* Show user info in dropdown when collapsed */}
+              {collapsed && (
+                <>
+                  <div className="px-3 py-2 border-b border-border">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {getFullName()}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user?.email || ""}
+                    </p>
+                  </div>
+                </>
+              )}
               <DropdownMenuItem 
                 onClick={() => navigate("/profile")}
                 className="flex items-center gap-2 cursor-pointer hover:bg-muted focus:bg-muted"
               >
                 <User className="h-4 w-4" />
-                <span>Profile</span>
+                <span>View Profile</span>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive cursor-pointer">
                 <LogOut className="h-4 w-4" />
                 <span>Logout</span>

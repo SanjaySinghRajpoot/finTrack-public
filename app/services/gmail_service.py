@@ -7,13 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fastapi import HTTPException
-from openpyxl.descriptors import String
 
-from app.models.models import Email
+from app.models.models import Email, DocumentStaging
 from app.services.db_service import DBService
 from app.services.email_attachment_service import EmailAttachmentProcessor
-from app.services.llm_service import LLMService
-from app.utils.utils import create_processed_email_data
 from app.utils.exceptions import (
     NotFoundError,
     ExternalServiceError,
@@ -22,17 +19,18 @@ from app.utils.exceptions import (
     AuthenticationError
 )
 
+logger = logging.getLogger(__name__)
+
 
 class GmailClient:
     BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-    def __init__(self, access_token: str, db: DBService, user_id: int):
+    def __init__(self, access_token: str, db_service: DBService, user_id: int):
         try:
             self.access_token = access_token
             self.headers = {"Authorization": f"Bearer {self.access_token}"}
-            self.db = db
+            self.db_service = db_service
             self.user_id = user_id
-            self.llm_service = LLMService(user_id=user_id, db=db)
             self.batch_size = 10
             self.process_batch_size = None
             self._executor = ThreadPoolExecutor(max_workers=5)
@@ -40,34 +38,29 @@ class GmailClient:
             raise BusinessLogicError("Failed to initialize Gmail client", details={"error": str(e)})
 
     def _get(self, endpoint: str, params: dict = None):
-        """Helper for GET requests with auth header - SYNC method."""
+        """Helper for GET requests with auth header."""
         url = f"{self.BASE_URL}/{endpoint}"
         try:
             resp = requests.get(url, headers=self.headers, params=params)
             resp.raise_for_status()
             return resp.json()
-        except requests.exceptions.HTTPError as e:
+        except requests.exceptions.HTTPError:
             if resp.status_code == 401:
                 raise AuthenticationError("Gmail API authentication failed - token may be expired")
             elif resp.status_code == 403:
                 raise AuthenticationError("Gmail API access forbidden - insufficient permissions")
             elif resp.status_code == 404:
                 raise NotFoundError("Gmail resource", endpoint, details={"url": url})
-            else:
-                raise ExternalServiceError("Gmail API", f"HTTP {resp.status_code}: {resp.text}", 
-                                         details={"status_code": resp.status_code, "endpoint": endpoint})
+            raise ExternalServiceError(
+                "Gmail API", 
+                f"HTTP {resp.status_code}: {resp.text}", 
+                details={"status_code": resp.status_code, "endpoint": endpoint}
+            )
         except requests.exceptions.RequestException as e:
-            raise ExternalServiceError("Gmail API", f"Network error: {str(e)}", 
-                                     details={"endpoint": endpoint})
+            raise ExternalServiceError("Gmail API", f"Network error: {str(e)}", details={"endpoint": endpoint})
 
     async def list_messages(self, limit: int = 100):
-        """
-        List up to `limit` Gmail messages that are finance-related (async).
-        Filters for emails with:
-          - keywords in subject/body (invoice, bill, payment, subscription)
-          - OR attachments likely to be invoices
-        Only considers emails from the last 90 days.
-        """
+        """List up to `limit` Gmail messages that are finance-related."""
         finance_keywords = "(subject:invoice OR subject:bill OR subject:payment OR subject:subscription OR invoice OR billing OR payment OR receipt)"
         query = f"((has:attachment AND {finance_keywords}) OR {finance_keywords}) newer_than:15d"
 
@@ -85,17 +78,15 @@ class GmailClient:
                     params["pageToken"] = page_token
 
                 try:
-                    # Run sync _get in thread pool to avoid blocking
                     loop = asyncio.get_event_loop()
                     data = await loop.run_in_executor(
                         self._executor,
                         lambda: self._get("messages", params=params)
                     )
-                except (AuthenticationError, ExternalServiceError) as e:
-                    # Re-raise authentication and service errors
-                    raise e
+                except (AuthenticationError, ExternalServiceError):
+                    raise
                 except Exception as e:
-                    logging.error(f"Unexpected error fetching Gmail messages: {e}")
+                    logger.error(f"Unexpected error fetching Gmail messages: {e}")
                     raise ExternalServiceError("Gmail API", f"Failed to fetch messages: {str(e)}")
 
                 all_messages.extend(data.get("messages", []))
@@ -105,31 +96,33 @@ class GmailClient:
 
                 page_token = data["nextPageToken"]
 
-        except (AuthenticationError, ExternalServiceError) as e:
-            # Re-raise our custom exceptions
-            raise e
+        except (AuthenticationError, ExternalServiceError):
+            raise
         except Exception as e:
-            logging.exception(f"Error while listing finance emails for user {self.user_id}: {e}")
-            raise BusinessLogicError(f"Failed to list messages for user {self.user_id}", 
-                                   details={"error": str(e)})
+            logger.exception(f"Error while listing finance emails for user {self.user_id}: {e}")
+            raise BusinessLogicError(
+                f"Failed to list messages for user {self.user_id}", 
+                details={"error": str(e)}
+            )
 
         return all_messages[:limit]
 
     async def get_message(self, msg_id: str):
-        """Fetch full message details by ID (async)."""
+        """Fetch full message details by ID."""
         try:
-            # Run sync _get in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 self._executor,
                 lambda: self._get(f"messages/{msg_id}", params={"format": "full"})
             )
-        except (AuthenticationError, ExternalServiceError, NotFoundError) as e:
-            # Re-raise our custom exceptions
-            raise e
+        except (AuthenticationError, ExternalServiceError, NotFoundError):
+            raise
         except Exception as e:
-            raise ExternalServiceError("Gmail API", f"Failed to fetch message {msg_id}: {str(e)}", 
-                                     details={"message_id": msg_id})
+            raise ExternalServiceError(
+                "Gmail API", 
+                f"Failed to fetch message {msg_id}: {str(e)}", 
+                details={"message_id": msg_id}
+            )
 
     def _extract_headers(self, headers_list):
         """Extract subject and from address."""
@@ -153,7 +146,7 @@ class GmailClient:
                 return base64.urlsafe_b64decode(body).decode("utf-8", errors="ignore")
             return ""
         except Exception as e:
-            logging.warning(f"Failed to decode email body: {e}")
+            logger.warning(f"Failed to decode email body: {e}")
             return ""
 
     async def fetch_emails(self):
@@ -164,17 +157,17 @@ class GmailClient:
         - Creates DocumentStaging entries for both attachment and HTML content emails.
         """
         try:
-            messages = await self.list_messages()  # Async call
+            messages = await self.list_messages()
             total_messages = len(messages)
 
             if not total_messages:
-                print("No new emails found.")
+                logger.info("No new emails found.")
                 return []
 
-            print(f"Found {total_messages} messages. Starting batch processing...")
+            logger.info(f"Found {total_messages} messages. Starting batch processing...")
 
             BATCH_SIZE = self.batch_size
-            TIMEOUT_BETWEEN_BATCHES = 2  # seconds
+            TIMEOUT_BETWEEN_BATCHES = 2
             total_batches = (total_messages + BATCH_SIZE - 1) // BATCH_SIZE
 
             staged_count = 0
@@ -183,29 +176,26 @@ class GmailClient:
                 batch = messages[start:start + BATCH_SIZE]
                 self.process_batch_size = len(batch)
                 batch_number = (start // BATCH_SIZE) + 1
-                print(f"\n➡️ Processing batch {batch_number}/{total_batches}")
+                logger.info(f"Processing batch {batch_number}/{total_batches}")
 
-                # Process each message in the batch
                 for msg in batch:
                     try:
                         msg_id = msg.get("id")
                         if not msg_id:
-                            print("⚠️ Skipping message with no ID.")
+                            logger.warning("Skipping message with no ID.")
                             continue
 
-                        # Skip already processed emails - direct DB call (sync)
-                        if self.db.get_email_by_id(msg_id):
-                            print(f"✅ Already processed message {msg_id}")
+                        if self.db_service.get_email_by_id(msg_id):
+                            logger.debug(f"Already processed message {msg_id}")
                             continue
 
-                        msg_data = await self.get_message(msg_id)  # Await async call
+                        msg_data = await self.get_message(msg_id)
                         payload = msg_data.get("payload", {})
                         headers_list = payload.get("headers", [])
 
                         subject, sender = self._extract_headers(headers_list)
                         body = self._decode_body(payload)
 
-                        # Create base email record with source
                         email_obj = self._create_email_record(
                             msg_id=msg_id,
                             sender=sender,
@@ -216,44 +206,37 @@ class GmailClient:
                         has_attachments = self._has_attachments(payload)
                         
                         if has_attachments:
-                            # Create DocumentStaging entries for each attachment
                             await self._create_staging_for_attachments(msg_id, payload, email_obj)
                         else:
-                            # Create DocumentStaging entry for HTML/text content
                             await self._create_staging_for_email_content(email_obj)
                         
                         staged_count += 1
 
                     except (AuthenticationError, ExternalServiceError) as e:
-                        # Authentication or service errors should stop processing
-                        print(f"❌ Critical error processing message {msg_id}: {e}")
-                        raise e
+                        logger.error(f"Critical error processing message {msg_id}: {e}")
+                        raise
                     except (DatabaseError, BusinessLogicError) as e:
-                        # Log but continue with other messages
-                        print(f"⚠️ Error processing message {msg_id}: {e}")
+                        logger.warning(f"Error processing message {msg_id}: {e}")
                         continue
                     except Exception as e:
-                        print(f"⚠️ Unexpected error processing message {msg_id}: {e}")
+                        logger.warning(f"Unexpected error processing message {msg_id}: {e}")
                         continue
 
-                # Delay between batches
                 if start + BATCH_SIZE < total_messages:
-                    print(f"⏳ Waiting {TIMEOUT_BETWEEN_BATCHES}s before next batch...")
+                    logger.debug(f"Waiting {TIMEOUT_BETWEEN_BATCHES}s before next batch...")
                     await asyncio.sleep(TIMEOUT_BETWEEN_BATCHES)
 
-            print(f"\n✅ Created {staged_count} DocumentStaging entries for async processing.")
+            logger.info(f"Created {staged_count} DocumentStaging entries for async processing.")
             return {"staged_count": staged_count, "total_messages": total_messages}
 
-        except (AuthenticationError, ExternalServiceError) as e:
-            # Re-raise critical errors
-            print(f"❌ Critical error while fetching emails: {e}")
-            raise e
+        except (AuthenticationError, ExternalServiceError):
+            raise
         except Exception as e:
-            print(f"❌ Error while fetching emails: {e}")
-            raise BusinessLogicError(f"Failed to fetch emails for user {self.user_id}", 
-                                   details={"error": str(e)})
-
-    # ---------------------- Helper Functions ----------------------
+            logger.error(f"Error while fetching emails: {e}")
+            raise BusinessLogicError(
+                f"Failed to fetch emails for user {self.user_id}", 
+                details={"error": str(e)}
+            )
 
     def _create_email_record(self, msg_id: str, sender: str, subject: str, plain_text_content: str):
         """Create and store an email record in the database."""
@@ -266,10 +249,12 @@ class GmailClient:
                 user_id=self.user_id,
                 plain_text_content=plain_text_content
             )
-            return self.db.add(email)
+            return self.db_service.add(email)
         except Exception as e:
-            raise DatabaseError(f"Failed to create email record for message {msg_id}", 
-                              details={"message_id": msg_id, "error": str(e)})
+            raise DatabaseError(
+                f"Failed to create email record for message {msg_id}", 
+                details={"message_id": msg_id, "error": str(e)}
+            )
 
     def _has_attachments(self, payload: Dict[str, Any]) -> bool:
         """Check if an email payload contains any attachments."""
@@ -282,54 +267,42 @@ class GmailClient:
 
     async def _process_email_attachments(self, msg_id: str, payload: dict, email_obj) -> List[Dict[str, Any]]:
         """Download and process all attachments for a given email."""
-        attachments = []
         try:
             email_attachments = EmailAttachmentProcessor(
                 self.access_token,
-                self.db,
+                self.db_service,
                 self.user_id,
                 self.process_batch_size
             )
 
-            # contains attachment_info
             attachments = await email_attachments.download_attachments(
                 msg_id, email_obj, payload
             )
-            print(f"📎 Processed attachments for message {msg_id}")
-        except (ExternalServiceError, DatabaseError, BusinessLogicError) as e:
-            # Re-raise our custom exceptions
-            print(f"⚠️ Failed to process attachments for {msg_id}: {e}")
-            raise e
+            logger.info(f"Processed attachments for message {msg_id}")
+            return attachments
+        except (ExternalServiceError, DatabaseError, BusinessLogicError):
+            raise
         except Exception as e:
-            print(f"⚠️ Failed to process attachments for {msg_id}: {e}")
-            raise BusinessLogicError(f"Failed to process attachments for message {msg_id}", 
-                                   details={"message_id": msg_id, "error": str(e)})
-        return attachments
+            logger.warning(f"Failed to process attachments for {msg_id}: {e}")
+            raise BusinessLogicError(
+                f"Failed to process attachments for message {msg_id}", 
+                details={"message_id": msg_id, "error": str(e)}
+            )
 
     async def _create_staging_for_attachments(self, msg_id: str, payload: dict, email_obj: Email):
-        """
-        Create DocumentStaging entries for email attachments.
-        Downloads attachments and creates staging entries for OCR processing.
-        Uses source_id to link to email and attachments.
-        """
+        """Create DocumentStaging entries for email attachments."""
         try:
-            from app.models.models import DocumentStaging
-            
-            # Download and save attachments
             attachments = await self._process_email_attachments(msg_id, payload, email_obj)
             
             for attachment_info in attachments:
                 if not attachment_info or not attachment_info.get("attachment_id"):
                     continue
                     
-                # Get attachment from DB
-                attachment = self.db.get_attachment_by_id(attachment_info["attachment_id"])
+                attachment = self.db_service.get_attachment_by_id(attachment_info["attachment_id"])
                 if not attachment:
-                    print(f"⚠️ Attachment not found: {attachment_info.get('attachment_id')}")
+                    logger.warning(f"Attachment not found: {attachment_info.get('attachment_id')}")
                     continue
                 
-                # Create DocumentStaging entry using only source_id
-                # The cron job will fetch attachment details using source_id
                 staging_entry = DocumentStaging(
                     user_id=self.user_id,
                     source_id=email_obj.source_id,
@@ -338,7 +311,7 @@ class GmailClient:
                     s3_key=attachment.storage_path or attachment.s3_url,
                     mime_type=attachment.mime_type,
                     file_size=attachment.size,
-                    document_type="INVOICE",  # Default type
+                    document_type="INVOICE",
                     source_type="email",
                     document_processing_status="pending",
                     meta_data={
@@ -346,39 +319,35 @@ class GmailClient:
                         "email_from": email_obj.from_address,
                         "gmail_message_id": email_obj.gmail_message_id,
                         "has_attachment": True,
-                        "attachment_id": attachment.id  # Store in metadata for easier lookup
+                        "attachment_id": attachment.id
                     }
                 )
-                self.db.add(staging_entry)
-                print(f"✅ Created staging entry for attachment: {attachment.filename}")
+                self.db_service.add(staging_entry)
+                logger.info(f"Created staging entry for attachment: {attachment.filename}")
                 
+        except (ExternalServiceError, DatabaseError, BusinessLogicError):
+            raise
         except Exception as e:
-            print(f"⚠️ Failed to create staging entries for attachments: {e}")
-            raise DatabaseError(f"Failed to create staging entries for email {msg_id}", 
-                              details={"message_id": msg_id, "error": str(e)})
+            logger.warning(f"Failed to create staging entries for attachments: {e}")
+            raise DatabaseError(
+                f"Failed to create staging entries for email {msg_id}", 
+                details={"message_id": msg_id, "error": str(e)}
+            )
 
     async def _create_staging_for_email_content(self, email_obj: Email):
-        """
-        Create DocumentStaging entry for email HTML/text content.
-        For emails without attachments, process the email body directly.
-        Uses source_id to link to email.
-        """
+        """Create DocumentStaging entry for email HTML/text content."""
         try:
-            from app.models.models import DocumentStaging
-            
-            # Use email content as the document to process
             content = email_obj.html_content or email_obj.plain_text_content
-            if not content or len(content.strip()) < 50:  # Skip if content too short
-                print(f"⚠️ Skipping email with insufficient content: {email_obj.gmail_message_id}")
+            if not content or len(content.strip()) < 50:
+                logger.warning(f"Skipping email with insufficient content: {email_obj.gmail_message_id}")
                 return
             
-            # Create DocumentStaging entry for direct LLM processing
             staging_entry = DocumentStaging(
                 user_id=self.user_id,
                 source_id=email_obj.source_id,
                 filename=f"email_{email_obj.gmail_message_id}.txt",
                 file_hash=None,
-                s3_key="",  # No S3 file for email content
+                s3_key="",
                 mime_type="text/plain",
                 file_size=len(content),
                 document_type="EMAIL_CONTENT",
@@ -392,10 +361,12 @@ class GmailClient:
                     "content_type": "html" if email_obj.html_content else "text"
                 }
             )
-            self.db.add(staging_entry)
-            print(f"✅ Created staging entry for email content: {email_obj.subject}")
+            self.db_service.add(staging_entry)
+            logger.info(f"Created staging entry for email content: {email_obj.subject}")
             
         except Exception as e:
-            print(f"⚠️ Failed to create staging entry for email content: {e}")
-            raise DatabaseError(f"Failed to create staging entry for email {email_obj.gmail_message_id}", 
-                              details={"message_id": email_obj.gmail_message_id, "error": str(e)})
+            logger.warning(f"Failed to create staging entry for email content: {e}")
+            raise DatabaseError(
+                f"Failed to create staging entry for email {email_obj.gmail_message_id}", 
+                details={"message_id": email_obj.gmail_message_id, "error": str(e)}
+            )

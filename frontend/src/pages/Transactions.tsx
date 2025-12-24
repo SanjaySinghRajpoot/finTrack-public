@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, lazy, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -6,17 +6,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ExpenseForm } from "@/components/ExpenseForm";
-import { TransactionDetailsModal } from "@/components/TransactionDetailsModal";
-import { FileUploadModal } from "@/components/FileUploadModal";
-import { ImageCaptureModal } from "@/components/ImageCaptureModal";
-import { AttachmentViewerModal } from "@/components/AttachmentViewerModal";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
-import { Plus, Upload, Camera, Pencil, Trash2, ChevronLeft, ChevronRight, Search, Filter, FileText, Download, Receipt, Check, X } from "lucide-react";
+import { Plus, Upload, Camera, Pencil, Trash2, ChevronLeft, ChevronRight, Search, Filter, FileText, Download, Receipt, Settings2, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { api, Expense, CreateExpenseRequest, ImportedExpense } from "@/lib/api";
 import { getCategoryConfig } from "@/lib/categories";
 import { format } from "date-fns";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+// Lazy load heavy modal components to reduce initial bundle
+const ExpenseForm = lazy(() => import("@/components/ExpenseForm").then(m => ({ default: m.ExpenseForm })));
+const TransactionDetailsModal = lazy(() => import("@/components/TransactionDetailsModal").then(m => ({ default: m.TransactionDetailsModal })));
+const FileUploadModal = lazy(() => import("@/components/FileUploadModal").then(m => ({ default: m.FileUploadModal })));
+const ImageCaptureModal = lazy(() => import("@/components/ImageCaptureModal").then(m => ({ default: m.ImageCaptureModal })));
+const AttachmentViewerModal = lazy(() => import("@/components/AttachmentViewerModal").then(m => ({ default: m.AttachmentViewerModal })));
+const CustomFields = lazy(() => import("@/components/CustomFields").then(m => ({ default: m.CustomFields })));
+const ExportModal = lazy(() => import("@/components/ExportModal").then(m => ({ default: m.ExportModal })));
+
+// Loading fallback for modals
+const ModalLoader = () => (
+  <div className="flex items-center justify-center p-8">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+  </div>
+);
 
 const ITEMS_PER_PAGE = 10;
 
@@ -25,6 +41,8 @@ const Transactions = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
+  const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<Expense | ImportedExpense | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -40,6 +58,13 @@ const Transactions = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewType, setViewType] = useState<"expenses" | "imported">("expenses");
 
+  // Fetch custom schema for dynamic columns
+  const { data: schema } = useQuery({
+    queryKey: ["documentSchema"],
+    queryFn: api.getDocumentSchema,
+    retry: false,
+  });
+
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["expenses"],
     queryFn: api.getExpenses,
@@ -51,6 +76,44 @@ const Transactions = () => {
     queryFn: api.getImportedExpenses,
     retry: false,
   });
+
+  // Get custom fields sorted by order
+  const customFields = useMemo(() => {
+    if (!schema?.custom_fields) return [];
+    return [...schema.custom_fields].sort((a, b) => (a.order || 0) - (b.order || 0));
+  }, [schema]);
+
+  // Helper function to get custom field value
+  const getCustomFieldValue = (item: Expense | ImportedExpense, fieldName: string): string => {
+    const isExpense = 'description' in item;
+    let customFields: Record<string, any> | undefined;
+
+    if (isExpense) {
+      // For expenses, get from processed_data[0].meta_data.custom_fields
+      const processedData = (item as Expense).processed_data?.[0];
+      customFields = processedData?.meta_data?.custom_fields;
+    } else {
+      // For imported expenses, get from meta_data.custom_fields
+      customFields = (item as ImportedExpense).meta_data?.custom_fields;
+    }
+
+    const value = customFields?.[fieldName];
+    
+    if (value === null || value === undefined) {
+      return "—";
+    }
+    
+    // Format the value based on type
+    if (typeof value === 'boolean') {
+      return value ? "Yes" : "No";
+    }
+    
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    
+    return String(value);
+  };
 
   const createMutation = useMutation({
     mutationFn: api.createExpense,
@@ -253,11 +316,13 @@ const Transactions = () => {
                   {editingExpense ? "Edit Expense" : "Add New Expense"}
                 </DialogTitle>
               </DialogHeader>
-              <ExpenseForm
-                onSubmit={handleSubmit}
-                defaultValues={editingExpense || undefined}
-                isLoading={createMutation.isPending || updateMutation.isPending}
-              />
+              <Suspense fallback={<ModalLoader />}>
+                <ExpenseForm
+                  onSubmit={handleSubmit}
+                  defaultValues={editingExpense || undefined}
+                  isLoading={createMutation.isPending || updateMutation.isPending}
+                />
+              </Suspense>
             </DialogContent>
           </Dialog>
         </div>
@@ -289,7 +354,7 @@ const Transactions = () => {
             </div>
 
             {/* Filters */}
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 items-center">
               <div className="relative flex-1 sm:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -311,6 +376,42 @@ const Transactions = () => {
                   ))}
                 </SelectContent>
               </Select>
+              
+              {/* Customize Schema Button */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsSchemaModalOpen(true)}
+                    className="h-9"
+                  >
+                    <Settings2 className="h-4 w-4 mr-2" />
+                    <span className="hidden sm:inline">Schema</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Customize Schema</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Export Button */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsExportModalOpen(true)}
+                    className="h-9"
+                  >
+                    <FileDown className="h-4 w-4 mr-2" />
+                    <span className="hidden sm:inline">Export</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Export to CSV</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </CardHeader>
@@ -353,6 +454,11 @@ const Transactions = () => {
                       <TableHead className="w-[120px] font-semibold text-foreground">Doc Type</TableHead>
                       <TableHead className="w-[130px] font-semibold text-foreground">Doc Number</TableHead>
                       <TableHead className="w-[120px] font-semibold text-foreground">Payment</TableHead>
+                      {customFields.map((field) => (
+                        <TableHead key={field.name} className="w-[120px] font-semibold text-foreground">
+                          {field.label}
+                        </TableHead>
+                      ))}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -485,6 +591,15 @@ const Transactions = () => {
                               );
                             })()}
                           </TableCell>
+
+                          {/* Custom Fields Columns */}
+                          {customFields.map((field) => (
+                            <TableCell key={field.name} className="w-[120px]">
+                              <span className="text-sm font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap block" title={getCustomFieldValue(item, field.name)}>
+                                {getCustomFieldValue(item, field.name)}
+                              </span>
+                            </TableCell>
+                          ))}
 
                           {/* Actions Column */}
                           <TableCell className="w-[130px] text-right">
@@ -630,35 +745,62 @@ const Transactions = () => {
       </Card>
 
       {/* File Upload Modal */}
-      <FileUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-      />
+      <Suspense fallback={<ModalLoader />}>
+        <FileUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+        />
+      </Suspense>
 
       {/* Image Capture Modal */}
-      <ImageCaptureModal
-        isOpen={isCaptureModalOpen}
-        onClose={() => setIsCaptureModalOpen(false)}
-      />
+      <Suspense fallback={<ModalLoader />}>
+        <ImageCaptureModal
+          isOpen={isCaptureModalOpen}
+          onClose={() => setIsCaptureModalOpen(false)}
+        />
+      </Suspense>
 
       {/* Attachment Viewer Modal */}
-      <AttachmentViewerModal
-        isOpen={!!selectedAttachment}
-        onClose={() => setSelectedAttachment(null)}
-        s3Url={selectedAttachment?.s3Url || null}
-        filename={selectedAttachment?.filename}
-        mimeType={selectedAttachment?.mimeType}
-      />
+      <Suspense fallback={<ModalLoader />}>
+        <AttachmentViewerModal
+          isOpen={!!selectedAttachment}
+          onClose={() => setSelectedAttachment(null)}
+          s3Url={selectedAttachment?.s3Url || null}
+          filename={selectedAttachment?.filename}
+          mimeType={selectedAttachment?.mimeType}
+        />
+      </Suspense>
 
       {/* Transaction Details Modal */}
-      <TransactionDetailsModal
-        transaction={selectedTransaction}
-        isOpen={isDetailsModalOpen}
-        onClose={() => {
-          setIsDetailsModalOpen(false);
-          setSelectedTransaction(null);
-        }}
-      />
+      <Suspense fallback={<ModalLoader />}>
+        <TransactionDetailsModal
+          transaction={selectedTransaction}
+          isOpen={isDetailsModalOpen}
+          onClose={() => {
+            setIsDetailsModalOpen(false);
+            setSelectedTransaction(null);
+          }}
+        />
+      </Suspense>
+
+      {/* Customize Schema Modal */}
+      <Suspense fallback={<ModalLoader />}>
+        <CustomFields
+          isOpen={isSchemaModalOpen}
+          onClose={() => setIsSchemaModalOpen(false)}
+        />
+      </Suspense>
+
+      {/* Export Modal */}
+      <Suspense fallback={<ModalLoader />}>
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          data={filteredData}
+          viewType={viewType}
+          customFields={customFields}
+        />
+      </Suspense>
     </div>
   );
 };

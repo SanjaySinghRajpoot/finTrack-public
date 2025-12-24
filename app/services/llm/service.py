@@ -3,6 +3,7 @@ import re
 from typing import List, Dict, Any
 from openai import OpenAI
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.services.llm.models import DocumentProcessingRequest
@@ -11,7 +12,7 @@ from app.services.llm.processors import (
     ManualDocumentProcessor,
     ImageDocumentProcessor,
 )
-from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS
+from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS, build_schema_with_custom_fields
 from app.utils.json_validator import JSONValidator
 
 
@@ -23,11 +24,14 @@ class LLMService:
       - Handling multiple text inputs in batches
     """
 
-    def __init__(self, user_id, db):
+    def __init__(self, user_id: int, db: Session):
         try:
             self.api_key = settings.OPENAI_API_KEY
             self.db = db
-            if not self.api_key:
+            self.user_id = user_id
+            self.model = settings.LLM_MODEL  
+            
+            if not self.api_key and "localhost" not in settings.OPENAI_BASE_URL:
                 raise ValueError("OPENAI_API_KEY environment variable is not set")
 
             self.client = OpenAI(
@@ -35,11 +39,11 @@ class LLMService:
                 base_url=settings.OPENAI_BASE_URL
             )
 
-            # Use common schema from utils
-            self.schema = DOCUMENT_SCHEMA
+            # Build schema with user's custom fields from database
+            self.schema = build_schema_with_custom_fields(db, user_id)
             self.required_fields = REQUIRED_FIELDS
             
-            # Use common JSON validator
+            # Use common JSON validator with the custom schema
             self.validator = JSONValidator(self.schema, self.required_fields)
 
             # Base prompt template that's shared for all processing types
@@ -192,7 +196,7 @@ class LLMService:
         """Call Gemini API with multimodal content (text + images)."""
         try:
             return self.client.chat.completions.create(
-                model="gemini-2.0-flash",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a document analysis AI that extracts structured data from images."},
                     {"role": "user", "content": multimodal_content}
@@ -251,7 +255,7 @@ class LLMService:
     def _call_gemini_api(self, formatted_prompt: str):
         try:
             return self.client.chat.completions.create(
-                model="gemini-2.0-flash",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a JSON parser."},
                     {"role": "user", "content": formatted_prompt}

@@ -157,3 +157,58 @@ class DocumentRepository(BaseRepository[ProcessedEmailData]):
         except Exception as e:
             self.db.rollback()
             raise e
+
+    def get_paginated_staging_documents(
+        self, 
+        user_id: int, 
+        limit: int, 
+        offset: int,
+        status_filter: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get paginated staging documents for a user.
+        
+        Args:
+            user_id: The user's ID
+            limit: Number of records to return
+            offset: Number of records to skip
+            status_filter: Optional filter by processing status (pending, in_progress, completed, failed)
+        
+        Returns:
+            Dict with data and pagination info
+        """
+        query = (
+            self.db.query(DocumentStaging)
+            .filter(DocumentStaging.user_id == user_id)
+            .options(joinedload(DocumentStaging.source))
+        )
+        
+        # Apply status filter if provided
+        if status_filter:
+            query = query.filter(
+                DocumentStaging.document_processing_status == status_filter.lower()
+            )
+        
+        # Get total count before pagination
+        total_count = query.count()
+        
+        # Apply ordering and pagination
+        results = (
+            query
+            .order_by(
+                DocumentStaging.created_at.desc()
+            )
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        
+        return {
+            "data": results,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total_count
+            }
+        }

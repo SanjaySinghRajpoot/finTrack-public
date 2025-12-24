@@ -168,7 +168,11 @@ class S3Service:
             timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             file_key = f"{folder}/{timestamp}_{file.filename}"
 
-            session = aioboto3.Session()
+            session = aioboto3.Session(
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                region_name=settings.AWS_REGION,
+            )
 
             async with session.client("s3") as s3_client:
 
@@ -210,7 +214,11 @@ class S3Service:
         try:
             logger.info(f"Downloading file from S3 - Key: {s3_key}")
             
-            session = aioboto3.Session()
+            session = aioboto3.Session(
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                region_name=settings.AWS_REGION,
+            )
 
             async with session.client("s3") as s3_client:
                 response = await s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)

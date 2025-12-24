@@ -5,6 +5,7 @@ from app.controller.expense_controller import ExpenseController
 from app.controller.file_controller import FileController
 from app.controller.user_controller import UserController
 from app.controller.integration_controller import IntegrationController
+from app.controller.custom_schema_controller import CustomSchemaController
 
 __all__ = [
     "AuthController",
@@ -14,4 +15,5 @@ __all__ = [
     "FileController",
     "UserController",
     "IntegrationController",
+    "CustomSchemaController",
 ]

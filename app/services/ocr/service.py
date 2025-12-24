@@ -22,7 +22,7 @@ from app.services.ocr.models import (
     LineItem,
 )
 from app.utils.utils import create_processed_email_data
-from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS
+from app.utils.schema_config import DOCUMENT_SCHEMA, REQUIRED_FIELDS, build_schema_with_custom_fields
 from app.utils.json_validator import JSONValidator
 
 
@@ -32,10 +32,15 @@ class OCRService:
     Provides methods to process documents from file path and return validated JSON.
     """
 
-    def __init__(self, db: Session, api_key: Optional[str] = None):
+    def __init__(self, db: Session, user_id: int, api_key: Optional[str] = None):
         self.db = db
+        self.user_id = user_id
         self.logger = logging.getLogger(__name__)
-        self.validator = JSONValidator(DOCUMENT_SCHEMA, REQUIRED_FIELDS)
+        
+        # Build schema with user's custom fields from database
+        self.schema = build_schema_with_custom_fields(db, user_id)
+        self.validator = JSONValidator(self.schema, REQUIRED_FIELDS)
+        
         self.api_key = api_key or settings.NANONETS_API_KEY or settings.DOCSTRANGE_API_KEY
         if self.api_key:
             self.logger.info("OCR Service initialized for NanoNets (API key provided)")
@@ -44,6 +49,33 @@ class OCRService:
 
     def is_available(self) -> bool:
         return self.api_key is not None
+
+    def _normalize_document_type(self, doc_type: str) -> str:
+        from difflib import get_close_matches
+        
+        if not doc_type:
+            return "other"
+        
+        # Convert to lowercase and replace spaces/hyphens with underscores
+        normalized = doc_type.lower().strip().replace(' ', '_').replace('-', '_')
+        
+        # Valid document types
+        valid_types = [
+            'invoice', 'bill', 'emi', 'payment_receipt', 
+            'tax_invoice', 'credit_note', 'debit_note', 'other'
+        ]
+        
+        # Try direct match first
+        if normalized in valid_types:
+            return normalized
+        
+        # Use fuzzy matching to find the closest match
+        matches = get_close_matches(normalized, valid_types, n=1, cutoff=0.6)
+        
+        if matches:
+            return matches[0]
+        else:
+            return 'other'
 
     def _call_nanonets_api_sync(self, file_path: str) -> Dict[str, Any]:
         """
@@ -57,8 +89,8 @@ class OCRService:
             # Build instructions combining caller instructions and schema-based guidance
             data = {
                 "output_format": "json",
-                # Pass the schema as a JSON string to help the extractor align outputs
-                "schema": json.dumps(DOCUMENT_SCHEMA) if DOCUMENT_SCHEMA else None,
+                # Pass the schema with custom fields as a JSON string to help the extractor align outputs
+                "schema": json.dumps(self.schema) if self.schema else None,
             }
             # Remove None values to avoid sending empty fields
             data = {k: v for k, v in data.items() if v is not None}
@@ -182,11 +214,13 @@ class OCRService:
     ) -> Dict[str, Any]:
         """
         Transform NanoNets API response to standard schema format.
-        New format has data in: result.json.content
+        Extracts data from result.json.content and sets is_processed based on success flag.
         
         Returns:
             Dict ready to be validated by ProcessedDocument model
         """
+        from app.repositories.custom_schema_repository import CustomSchemaRepository
+        
         # Parse string if needed
         if isinstance(json_data, str):
             try:
@@ -201,8 +235,10 @@ class OCRService:
         elif not isinstance(json_data, dict):
             json_data = {}
         
-        # Extract the actual content from the new NanoNets format
-        # Path: result -> json -> content
+        # Check success flag to determine if processing was successful
+        is_processing_valid = json_data.get("success", False)
+        
+        # Extract the actual content from result.json.content
         extracted_content = {}
         if "result" in json_data and isinstance(json_data["result"], dict):
             result = json_data["result"]
@@ -210,113 +246,127 @@ class OCRService:
                 json_result = result["json"]
                 if "content" in json_result and isinstance(json_result["content"], dict):
                     extracted_content = json_result["content"]
-                else:
-                    # Fallback: use the entire json result if no content key
-                    extracted_content = json_result
         
-        # If no result.json.content found, try old format (structured_data.content)
+        # If no content found, return minimal valid structure
         if not extracted_content:
-            if "structured_data" in json_data and "content" in json_data["structured_data"]:
-                extracted_content = json_data["structured_data"]["content"]
-            else:
-                # Last fallback: use root level data
-                extracted_content = json_data.copy()
+            self.logger.warning("No content found in result.json.content")
+            return {
+                "source_id": source_id,
+                "user_id": user_id,
+                "is_processing_valid": is_processing_valid,
+                "document_type": document_type,
+            }
         
-        # Map NanoNets fields to our standard schema
-        standardized_data = {}
+        # Start with all extracted content
+        standardized_data = extracted_content.copy()
         
-        # Map document_number (could be invoice_number, bill_number, etc.)
-        if "invoice_number" in extracted_content:
-            standardized_data["document_number"] = extracted_content["invoice_number"]
-        elif "bill_number" in extracted_content:
-            standardized_data["document_number"] = extracted_content["bill_number"]
-        elif "document_number" in extracted_content:
-            standardized_data["document_number"] = extracted_content["document_number"]
+        # Separate custom fields from default fields
+        custom_fields_data = {}
         
-        # Map title (could be document_title)
-        if "document_title" in extracted_content:
-            standardized_data["title"] = extracted_content["document_title"]
-        elif "title" in extracted_content:
-            standardized_data["title"] = extracted_content["title"]
+        # Get custom field definitions from database
+        try:
+            custom_schema_repo = CustomSchemaRepository(self.db)
+            custom_schema = custom_schema_repo.get_by_user_id(user_id)
+            
+            if custom_schema and custom_schema.is_active and custom_schema.fields:
+                # Create a set of custom field names (case-insensitive)
+                custom_field_names = {
+                    field.get("name", "").lower().replace(' ', '_').replace('-', '_')
+                    for field in custom_schema.fields
+                    if field.get("name")
+                }
+                
+                # Separate custom fields from standardized data
+                for key in list(standardized_data.keys()):
+                    normalized_key = key.lower().replace(' ', '_').replace('-', '_')
+                    if normalized_key in custom_field_names:
+                        # This is a custom field, move it to custom_fields_data
+                        custom_fields_data[key] = standardized_data.pop(key)
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch custom schema: {e}")
         
-        # Map email fields to metadata if present
-        sender_email = extracted_content.get("sender_email")
-        recipient_email = extracted_content.get("recipient_email")
-        sender_name = extracted_content.get("sender_name")
-        
-        # Map status to is_paid
-        status = extracted_content.get("status", "").lower()
-        if status in ["paid", "completed", "success"]:
-            standardized_data["is_paid"] = True
-        elif status in ["unpaid", "pending", "due"]:
-            standardized_data["is_paid"] = False
-        
-        # Direct mappings for common fields
+        # Map common field variations to standard names
         field_mappings = {
-            "amount": "amount",
-            "currency": "currency",
-            "description": "description",
+            "Invoice Number": "document_number",
+            "invoice_number": "document_number",
+            "bill_number": "document_number",
+            "Document Number": "document_number",
+            "Title": "title",
+            "document_title": "title",
+            "Amount": "amount",
+            "Currency": "currency",
+            "Description": "description",
+            "Issue Date": "issue_date",
             "issue_date": "issue_date",
+            "Due Date": "due_date",
             "due_date": "due_date",
+            "Payment Date": "payment_date",
             "payment_date": "payment_date",
+            "Payment Method": "payment_method",
             "payment_method": "payment_method",
+            "Reference ID": "reference_id",
             "reference_id": "reference_id",
+            "Vendor Name": "vendor_name",
             "vendor_name": "vendor_name",
+            "Vendor GSTIN": "vendor_gstin",
             "vendor_gstin": "vendor_gstin",
-            "category": "category",
-            "tags": "tags",
-            "items": "items",
+            "Document Type": "document_type",
+            "document_type": "document_type",
+            "Status": "status",
+            "status": "status",
         }
         
-        for source_field, target_field in field_mappings.items():
-            if source_field in extracted_content and extracted_content[source_field] is not None:
-                standardized_data[target_field] = extracted_content[source_field]
+        # Apply field mappings
+        normalized_data = {}
+        for key, value in standardized_data.items():
+            if key in field_mappings:
+                normalized_key = field_mappings[key]
+                normalized_data[normalized_key] = value
+            else:
+                # Keep original key if no mapping found (lowercase with underscores)
+                normalized_key = key.lower().replace(' ', '_').replace('-', '_')
+                normalized_data[normalized_key] = value
         
-        # Build metadata from extra fields
-        metadata = extracted_content.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
+        # Handle status -> is_paid conversion
+        if "status" in normalized_data:
+            status = normalized_data.pop("status")
+            status_str = str(status).lower() if status is not None else ""
+            if status_str in ["paid", "completed", "success", "true", "1"]:
+                normalized_data["is_paid"] = True
+            elif status_str in ["unpaid", "pending", "due", "false", "0"]:
+                normalized_data["is_paid"] = False
         
-        # Add email fields to metadata if present
-        if sender_email:
-            metadata["sender_email"] = sender_email
-        if recipient_email:
-            metadata["recipient_email"] = recipient_email
-        if sender_name:
-            metadata["sender_name"] = sender_name
+        # Normalize document type
+        normalized_data["document_type"] = self._normalize_document_type(
+            normalized_data.get("document_type", document_type)
+        )
         
-        # Add API response metadata
-        if "confidence_score" in extracted_content:
-            metadata["confidence_score"] = extracted_content["confidence_score"]
-        if "bounding_boxes" in extracted_content:
-            metadata["bounding_boxes"] = extracted_content["bounding_boxes"]
+        # Build metadata
+        metadata = {}
         
+        # Add custom fields to metadata if any
+        if custom_fields_data:
+            metadata["custom_fields"] = custom_fields_data
+            self.logger.info(f"Stored {len(custom_fields_data)} custom field(s): {list(custom_fields_data.keys())}")
+        
+        # Store processing metadata from NanoNets response
+        if "processing_time" in json_data:
+            metadata["processing_time"] = json_data["processing_time"]
+        if "record_id" in json_data:
+            metadata["record_id"] = json_data["record_id"]
+        if "pages_processed" in json_data:
+            metadata["pages_processed"] = json_data["pages_processed"]
+        
+        # Add metadata if it has content
         if metadata:
-            standardized_data["metadata"] = metadata
+            normalized_data["metadata"] = metadata
         
         # Add required fields
-        standardized_data["source_id"] = source_id
-        standardized_data["user_id"] = user_id
-        standardized_data["is_processing_valid"] = True
+        normalized_data["source_id"] = source_id
+        normalized_data["user_id"] = user_id
+        normalized_data["is_processing_valid"] = is_processing_valid
         
-        # Set document_type (from extracted data or fallback to parameter)
-        if "document_type" in extracted_content and extracted_content["document_type"]:
-            # Map common variations to our enum values
-            doc_type = extracted_content["document_type"].lower().replace(" ", "_")
-            if "tax" in doc_type and "invoice" in doc_type:
-                standardized_data["document_type"] = "tax_invoice"
-            elif "invoice" in doc_type:
-                standardized_data["document_type"] = "invoice"
-            elif "bill" in doc_type:
-                standardized_data["document_type"] = "bill"
-            elif "receipt" in doc_type:
-                standardized_data["document_type"] = "payment_receipt"
-            else:
-                standardized_data["document_type"] = document_type
-        else:
-            standardized_data["document_type"] = document_type
-        
-        return standardized_data
+        return normalized_data
 
     def _save_processed_data(self, document: ProcessedDocument):
         """
@@ -346,8 +396,11 @@ class OCRService:
                 email_id=None,
                 data=data_dict,
             )
+
             db_service = DBService(self.db)
+
             db_service.save_proccessed_email_data(data_obj)
+            
             if items_data and getattr(data_obj, "id", None):
                 db_service.save_processed_items(data_obj.id, items_data)
         except Exception as e:

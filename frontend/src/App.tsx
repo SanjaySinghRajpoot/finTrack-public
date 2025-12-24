@@ -1,21 +1,83 @@
+import { Suspense, lazy, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { Provider } from "react-redux";
 import { store } from "./store";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import DashboardAnalytics from "./pages/DashboardAnalytics";
-import Transactions from "./pages/Transactions";
-import Settings from "./pages/Settings";
-import Profile from "./pages/Profile";
-import Auth from "./pages/Auth";
-import AuthCallback from "./pages/AuthCallback";
-import NotFound from "./pages/NotFound";
+import { api, getJwtCookie } from "./lib/api";
 
-const queryClient = new QueryClient();
+// Lazy load all pages for code splitting - reduces initial bundle size
+const DashboardAnalytics = lazy(() => import("./pages/DashboardAnalytics"));
+const Transactions = lazy(() => import("./pages/Transactions"));
+const Files = lazy(() => import("./pages/Files"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Auth = lazy(() => import("./pages/Auth"));
+const AuthCallback = lazy(() => import("./pages/AuthCallback"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30 * 1000, // 30 seconds
+      gcTime: 5 * 60 * 1000, // 5 minutes (formerly cacheTime)
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+// Prefetch critical data if user is authenticated
+const prefetchCriticalData = () => {
+  const jwt = getJwtCookie();
+  if (jwt) {
+    // Prefetch in parallel - these will be cached and ready when components mount
+    queryClient.prefetchQuery({
+      queryKey: ["user"],
+      queryFn: api.getUser,
+      staleTime: 5 * 60 * 1000,
+    });
+    queryClient.prefetchQuery({
+      queryKey: ["expenses"],
+      queryFn: api.getExpenses,
+    });
+    queryClient.prefetchQuery({
+      queryKey: ["importedExpenses"],
+      queryFn: api.getImportedExpenses,
+    });
+  }
+};
+
+// Start prefetching immediately
+prefetchCriticalData();
+
+// Loading fallback component for full page (auth, etc.)
+const PageLoader = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+  </div>
+);
+
+// Loading fallback for content area only (keeps layout stable)
+const ContentLoader = () => (
+  <div className="flex items-center justify-center min-h-[60vh]">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+  </div>
+);
+
+// Layout wrapper that includes Suspense for nested routes
+const LayoutWithSuspense = () => (
+  <ProtectedRoute>
+    <Layout>
+      <Suspense fallback={<ContentLoader />}>
+        <Outlet />
+      </Suspense>
+    </Layout>
+  </ProtectedRoute>
+);
 
 const App = () => (
   <Provider store={store}>
@@ -25,14 +87,21 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/api/emails/oauth2callback" element={<AuthCallback />} />
-            <Route path="/" element={<ProtectedRoute><Layout><DashboardAnalytics /></Layout></ProtectedRoute>} />
-            <Route path="/transactions" element={<ProtectedRoute><Layout><Transactions /></Layout></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><Layout><Profile /></Layout></ProtectedRoute>} />
+            {/* Auth routes with full page loader */}
+            <Route path="/auth" element={<Suspense fallback={<PageLoader />}><Auth /></Suspense>} />
+            <Route path="/api/emails/oauth2callback" element={<Suspense fallback={<PageLoader />}><AuthCallback /></Suspense>} />
+            
+            {/* Protected routes with shared Layout - only content area reloads */}
+            <Route element={<LayoutWithSuspense />}>
+              <Route path="/" element={<DashboardAnalytics />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/files" element={<Files />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/profile" element={<Profile />} />
+            </Route>
+            
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<Suspense fallback={<PageLoader />}><NotFound /></Suspense>} />
           </Routes>
         </BrowserRouter>
       </TooltipProvider>

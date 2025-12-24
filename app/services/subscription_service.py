@@ -86,17 +86,6 @@ class SubscriptionService:
         )
     
     def create_starter_subscription_safe(self, user_id: int) -> Optional[SubscriptionCreationSchema]:
-        """
-        Create a starter subscription for a new user.
-        This is a safe version that returns None instead of raising exceptions,
-        useful for scenarios where subscription creation failure shouldn't block user creation.
-        
-        Args:
-            user_id: The ID of the user to create subscription for
-            
-        Returns:
-            SubscriptionCreationSchema or None: The created subscription details or None if failed
-        """
         try:
             subscription_result = self.create_starter_subscription(user_id)
             print(f"Created subscription {subscription_result.subscription_id} for user {user_id}")

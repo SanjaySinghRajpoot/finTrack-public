@@ -245,3 +245,14 @@ class DBService:
         return self.document_repo.update_staging_status(
             staging_id, status, error_message, attempts, metadata
         )
+
+    def get_staging_documents(
+        self, 
+        user_id: int, 
+        limit: int, 
+        offset: int,
+        status_filter: str = None
+    ) -> Dict[str, Any]:
+        return self.document_repo.get_paginated_staging_documents(
+            user_id, limit, offset, status_filter
+        )
