@@ -14,11 +14,12 @@ A modern full-stack financial tracking application that combines automated email
 
 ## Features
 
-- **Manual Expense Tracking** — Add, edit, and categorize expenses
-- **Gmail Integration** — Auto-import receipts via OAuth
-- **AI Document Processing** — Extract data from PDFs and images using OpenAI
-- **Credit System** — 100 free credits on signup
-- **Background Jobs** — Scheduled email sync and processing
+-   **Manual Expense Tracking** — Effortlessly add, edit, and categorize your expenses with a user-friendly interface. Gain full control over your financial records by manually inputting transactions.
+-   **Gmail Integration** — Securely connect your Gmail account via OAuth to automatically import receipts and transaction details directly into FinTrack, reducing manual data entry.
+-   **AI Document Processing** — Leverage OpenAI's advanced AI capabilities to intelligently extract key data from uploaded PDF documents and image files, such as invoices and receipts, for streamlined expense recording.
+-   **Credit System** — Start your financial tracking journey with 100 free credits upon signup, which can be used for AI document processing and other premium features.
+-   **Background Jobs** — Automated scheduled tasks ensure your financial data is always up-to-date, including regular email synchronization for new receipts and background processing of documents.
+-   **Asynchronous Invoice Processing** — Upload invoices and receipts for background processing, allowing you to continue using the application without interruption while AI extracts data.
 
 ## Tech Stack
 
