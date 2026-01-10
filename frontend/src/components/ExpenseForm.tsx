@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { categories } from "@/lib/categories";
 import { CreateExpenseRequest } from "@/lib/api";
+import { useAnalytics, EVENTS } from "@/lib/analytics";
 
 const expenseSchema = z.object({
   amount: z.string().min(1, "Amount is required").refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
@@ -41,6 +42,8 @@ interface ExpenseFormProps {
 }
 
 export function ExpenseForm({ onSubmit, defaultValues, isLoading }: ExpenseFormProps) {
+  const { trackEvent } = useAnalytics();
+
   const form = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseSchema),
     defaultValues: {
@@ -52,12 +55,23 @@ export function ExpenseForm({ onSubmit, defaultValues, isLoading }: ExpenseFormP
   });
 
   const handleSubmit = (values: ExpenseFormValues) => {
-    onSubmit({
+    const expenseData = {
       amount: Number(values.amount),
       currency: values.currency,
       category: values.category,
       description: values.description,
+    };
+
+    // Track expense creation
+    trackEvent(defaultValues ? EVENTS.EXPENSE_UPDATED : EVENTS.EXPENSE_CREATED, {
+      amount: expenseData.amount,
+      currency: expenseData.currency,
+      category: expenseData.category,
+      has_description: !!expenseData.description,
+      description_length: expenseData.description.length,
     });
+
+    onSubmit(expenseData);
   };
 
   return (

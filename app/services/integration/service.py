@@ -64,6 +64,24 @@ class IntegrationService:
     @property
     def creation_service(self) -> IntegrationCreationService:
         return self._creation_service
+    
+    def _get_user_integration_by_type(self, user_id: int, integration_type: str) -> Optional[IntegrationStatus]:
+        """
+        Helper method to get user integration by user_id and integration type.
+        Centralizes the repeated integration status query pattern.
+        
+        Args:
+            user_id: The user's ID
+            integration_type: Integration type (e.g., 'gmail', 'whatsapp')
+            
+        Returns:
+            IntegrationStatus or None if not found
+        """
+        return (
+            self._db.query(IntegrationStatus)
+            .filter_by(user_id=user_id, integration_type=integration_type)
+            .first()
+        )
 
     def get_all_integrations(self, include_inactive: bool = False) -> List[Integration]:
         return self.query_service.get_all_integrations(include_inactive)

@@ -13,6 +13,7 @@ class EmailController:
             raise AuthenticationError("Not authenticated. Please login first.")
 
         db_service = DBService(db)
-        gmail_client = GmailClient(access_token, db_service, user_id)
-
-        return await gmail_client.fetch_emails()
+        
+        # Use context manager to ensure proper cleanup
+        async with GmailClient(access_token, db_service, user_id) as gmail_client:
+            return await gmail_client.fetch_emails()

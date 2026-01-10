@@ -158,6 +158,82 @@ class DocumentRepository(BaseRepository[ProcessedEmailData]):
             self.db.rollback()
             raise e
 
+    def update_staging_status_with_source_id(
+            self,
+            source_id: int,
+            status: str,
+            error_message: str = None,
+            attempts: int = None,
+            metadata: dict = None
+    ) -> Optional[DocumentStaging]:
+        try:
+            staging = (
+                self.db.query(DocumentStaging)
+                .filter(DocumentStaging.source_id == source_id)
+                .first()
+            )
+
+            if not staging:
+                raise ValueError(f"DocumentStaging with source_id {source_id} not found")
+
+            staging.document_processing_status = status.lower()
+
+            if status.lower() == "in_progress":
+                staging.processing_started_at = datetime.utcnow()
+            elif status.lower() in ["completed", "failed"]:
+                staging.processing_completed_at = datetime.utcnow()
+
+            if attempts is not None:
+                staging.processing_attempts = attempts
+
+            if error_message:
+                staging.error_message = error_message
+
+            if metadata:
+                if staging.meta_data:
+                    staging.meta_data.update(metadata)
+                else:
+                    staging.meta_data = metadata
+
+            self.db.commit()
+            return staging
+
+        except Exception as e:
+            self.db.rollback()
+            raise e
+
+    def get_staging_document_by_source_id(self, source_id: int) -> Optional[DocumentStaging]:
+        """
+        Get DocumentStaging record by source_id.
+        
+        Args:
+            source_id: Source ID to query
+            
+        Returns:
+            Optional[DocumentStaging]: Document staging record or None
+        """
+        return (
+            self.db.query(DocumentStaging)
+            .filter(DocumentStaging.source_id == source_id)
+            .first()
+        )
+    
+    def get_staging_documents_by_source_id(self, source_id: int) -> List[DocumentStaging]:
+        """
+        Get all DocumentStaging records by source_id.
+        
+        Args:
+            source_id: Source ID to query
+            
+        Returns:
+            List[DocumentStaging]: List of document staging records
+        """
+        return (
+            self.db.query(DocumentStaging)
+            .filter(DocumentStaging.source_id == source_id)
+            .all()
+        )
+
     def get_paginated_staging_documents(
         self, 
         user_id: int, 

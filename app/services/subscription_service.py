@@ -16,6 +16,9 @@ from app.models.integration_schemas import (
     SubscriptionUpdateSchema
 )
 
+# Constants for active subscription statuses
+ACTIVE_SUBSCRIPTION_STATUSES = [SubscriptionStatus.active, SubscriptionStatus.trial]
+
 
 class SubscriptionService:
     """Service class to handle subscription-related operations"""
@@ -23,6 +26,19 @@ class SubscriptionService:
     def __init__(self, db: Session):
         self.db = db
         self.db_service = DBService(db)
+    
+    def _get_active_subscription_query(self, user_id: int):
+        """
+        Helper method to get the base query for active subscriptions.
+        Centralizes the subscription status filter pattern.
+        """
+        return (
+            self.db.query(Subscription)
+            .filter(
+                Subscription.user_id == user_id,
+                Subscription.status.in_(ACTIVE_SUBSCRIPTION_STATUSES)
+            )
+        )
     
     def create_starter_subscription(self, user_id: int) -> SubscriptionCreationSchema:
         """
@@ -43,10 +59,7 @@ class SubscriptionService:
             raise ValueError(f"User with ID {user_id} not found")
         
         # Check if user already has an active subscription
-        existing_subscription = self.db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.trial])
-        ).first()
+        existing_subscription = self._get_active_subscription_query(user_id).first()
         
         if existing_subscription:
             raise ValueError(f"User {user_id} already has an active subscription")
@@ -104,10 +117,7 @@ class SubscriptionService:
         Returns:
             Subscription or None: The active subscription if found
         """
-        return self.db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.trial])
-        ).first()
+        return self._get_active_subscription_query(user_id).first()
     
     def update_subscription_status(self, subscription_id: int, status: SubscriptionStatus) -> SubscriptionUpdateSchema:
         """

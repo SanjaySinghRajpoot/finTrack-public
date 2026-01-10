@@ -55,17 +55,20 @@ class ImageDocumentProcessor(BaseLLMProcessor):
                     self.db.save_processed_items(data_obj.id, items_data)
                     
         except Exception as e:
-            print(f"Error saving image document response: {e}")
-            raise e
+            error_msg = f"Error saving image document response: {e}"
+            print(error_msg)
+            # Re-raise the exception to fail the file processing
+            raise Exception(error_msg)
     
     def post_processing(self, results: list[dict]) -> list[dict]:
         """No additional post-processing needed for image uploads."""
         return results
     
-    def process(self, items: list) -> list[dict]:
+    async def process(self, items: list) -> list[dict]:
         """
         Override process method to handle image-based processing.
         Uses multimodal LLM processing instead of text-only.
+        Uses async to prevent blocking the event loop.
         """
         try:
             if not items or not isinstance(items, list):
@@ -99,7 +102,8 @@ class ImageDocumentProcessor(BaseLLMProcessor):
                 raise HTTPException(status_code=400, detail="No valid image content found to process")
 
             try:
-                results = self.llm_service.llm_image_processing(image_items)
+                # Use async LLM image processing to prevent blocking
+                results = await self.llm_service.llm_image_processing(image_items)
             except Exception as llm_error:
                 raise HTTPException(status_code=500, detail=f"LLM image processing failed: {llm_error}")
 

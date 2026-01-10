@@ -36,6 +36,30 @@ class GmailClient:
             self._executor = ThreadPoolExecutor(max_workers=5)
         except Exception as e:
             raise BusinessLogicError("Failed to initialize Gmail client", details={"error": str(e)})
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures executor is properly shut down."""
+        self.cleanup()
+        return False
+    
+    def cleanup(self):
+        """Explicitly shutdown the ThreadPoolExecutor."""
+        if hasattr(self, '_executor') and self._executor:
+            logger.debug(f"Shutting down ThreadPoolExecutor for user {self.user_id}")
+            self._executor.shutdown(wait=True)
+            self._executor = None
+    
+    def __del__(self):
+        """Destructor to ensure cleanup even if context manager is not used."""
+        try:
+            self.cleanup()
+        except Exception:
+            # Silently handle cleanup errors in destructor
+            pass
 
     def _get(self, endpoint: str, params: dict = None):
         """Helper for GET requests with auth header."""

@@ -63,7 +63,10 @@ class EmailBatchProcessor(BaseLLMProcessor):
                     self.db.save_processed_items(data_obj.id, items_data)
                     
         except Exception as e:
-            raise e
+            error_msg = f"Error saving email processing response: {e}"
+            print(error_msg)
+            # Re-raise the exception to fail the processing
+            raise Exception(error_msg)
     
     def post_processing(self, results: list[dict]) -> list[dict]:
         """Update email status after processing."""

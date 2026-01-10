@@ -12,12 +12,19 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAppSelector } from "@/store/hooks";
+import { useAnalytics, EVENTS } from "@/lib/analytics";
 
 export const TopBar = () => {
   const navigate = useNavigate();
+  const { trackEvent, resetUser } = useAnalytics();
   const userEmail = useAppSelector((state) => state.user.email);
   
   const handleLogout = () => {
+    trackEvent(EVENTS.LOGOUT, {
+      user_email: userEmail,
+      source: 'topbar_menu',
+    });
+    resetUser(); // Reset PostHog user identification
     api.logout();
     navigate("/auth");
   };
@@ -51,7 +58,13 @@ export const TopBar = () => {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 bg-card border-border shadow-lg z-50">
             <DropdownMenuItem 
-              onClick={() => navigate("/profile")}
+              onClick={() => {
+                trackEvent(EVENTS.NAVIGATION, {
+                  destination: 'profile',
+                  source: 'topbar_menu',
+                });
+                navigate("/profile");
+              }}
               className="flex items-center gap-2 cursor-pointer hover:bg-muted focus:bg-muted"
             >
               <User className="h-4 w-4" />

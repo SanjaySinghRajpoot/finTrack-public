@@ -2,28 +2,27 @@
 Centralized Configuration Management for FinTrack
 
 This module provides a single source of truth for all application configuration.
-It uses Pydantic Settings for type-safe environment variable management with validation.
+Environment variables are loaded from:
+1. System environment variables (including Docker Compose)
+2. .env file in the project root
+
+No default values - missing required values will raise an error.
 
 Usage:
     from app.core.config import settings
     
-    # Access any configuration
     database_url = settings.DATABASE_URL
     jwt_secret = settings.JWT_SECRET
 """
 
 from functools import lru_cache
-from typing import Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
-    
-    All settings can be overridden by environment variables.
-    Default values are provided where appropriate for development.
+    All required fields must be set - no defaults provided.
     """
     
     model_config = SettingsConfigDict(
@@ -36,72 +35,51 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Application Settings
     # ==========================================================================
-    APP_NAME: str = Field(default="FinTrack", description="Application name")
-    APP_ENV: str = Field(default="development", description="Application environment (development, staging, production)")
-    DEBUG: bool = Field(default=False, description="Enable debug mode")
-    HOST_URL: str = Field(default="http://localhost:8000", description="Base URL of the application")
-    FRONTEND_URL: str = Field(default="http://localhost:8080", description="Frontend application URL")
+    HOST_URL: str
+    FRONTEND_URL: str
     
     # ==========================================================================
     # Database Configuration
     # ==========================================================================
-    DATABASE_URL: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/fintrack",
-        description="PostgreSQL database connection URL"
-    )
-    DB_POOL_SIZE: int = Field(default=5, description="Database connection pool size")
-    DB_MAX_OVERFLOW: int = Field(default=10, description="Maximum overflow connections")
+    DATABASE_URL: str
     
     # ==========================================================================
     # JWT Configuration
     # ==========================================================================
-    JWT_SECRET: str = Field(
-        default="your-secret-key-change-in-production",
-        description="Secret key for JWT token signing"
-    )
-    JWT_ALGORITHM: str = Field(default="HS256", description="JWT signing algorithm")
-    JWT_EXPIRY_MINUTES: int = Field(default=1440, description="JWT token expiry in minutes (default: 24 hours)")
+    JWT_SECRET: str
+    JWT_ALGORITHM: str
+    JWT_EXPIRY_MINUTES: int
     
     # ==========================================================================
     # Google OAuth Configuration
     # ==========================================================================
-    GOOGLE_CLIENT_ID: Optional[str] = Field(default=None, description="Google OAuth2 Client ID")
-    GOOGLE_CLIENT_SECRET: Optional[str] = Field(default=None, description="Google OAuth2 Client Secret")
+    GOOGLE_CLIENT_ID: str
+    GOOGLE_CLIENT_SECRET: str
     
     # ==========================================================================
     # AWS S3 Configuration
     # ==========================================================================
-    AWS_ACCESS_KEY_ID: Optional[str] = Field(default=None, description="AWS Access Key ID")
-    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, description="AWS Secret Access Key")
-    AWS_REGION: str = Field(default="ap-south-1", description="AWS Region")
-    AWS_S3_BUCKET: Optional[str] = Field(default=None, description="S3 Bucket name for file storage")
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_REGION: str
+    AWS_S3_BUCKET: str
     
     # ==========================================================================
     # OpenAI / LLM Configuration
     # ==========================================================================
-    OPENAI_API_KEY: Optional[str] = Field(default=None, description="OpenAI API Key for LLM services")
-    OPENAI_BASE_URL: str = Field(
-        default="http://localhost:1234/v1",
-        description="OpenAI API base URL (can be changed for different providers like LMStudio)"
-    )
-    LLM_MODEL: str = Field(
-        default="local-model",
-        description="LLM model name to use (e.g., 'local-model' for LMStudio, 'gemini-2.0-flash' for Gemini)"
-    )
+    OPENAI_API_KEY: str
+    OPENAI_BASE_URL: str
+    LLM_MODEL: str
     
     # ==========================================================================
     # OCR Service Configuration
     # ==========================================================================
-    NANONETS_API_KEY: Optional[str] = Field(default=None, description="NanoNets API Key for OCR")
-    DOCSTRANGE_API_KEY: Optional[str] = Field(default=None, description="DocStrange API Key (fallback OCR)")
+    DOCSTRANGE_API_KEY: str
     
     # ==========================================================================
     # Encryption Configuration
     # ==========================================================================
-    ENCRYPTION_KEY: str = Field(
-        default="X1Tz1y9Ff0QZxQ9fDd0tKXk8h1u4z6pF8H2xG4XK9sY=",
-        description="Fernet encryption key for sensitive data"
-    )
+    ENCRYPTION_KEY: str
     
     # ==========================================================================
     # Computed Properties
@@ -115,47 +93,13 @@ class Settings(BaseSettings):
     def GMAIL_INTEGRATION_REDIRECT_URI(self) -> str:
         """OAuth2 callback URL for Gmail integration"""
         return f"{self.HOST_URL}/api/integration/gmail/callback"
-    
-    @property
-    def is_production(self) -> bool:
-        """Check if running in production environment"""
-        return self.APP_ENV.lower() == "production"
-    
-    @property
-    def is_development(self) -> bool:
-        """Check if running in development environment"""
-        return self.APP_ENV.lower() == "development"
-    
-    # ==========================================================================
-    # Validators
-    # ==========================================================================
-    @field_validator("JWT_SECRET")
-    @classmethod
-    def validate_jwt_secret(cls, v: str) -> str:
-        if v == "your-secret-key-change-in-production":
-            import warnings
-            warnings.warn(
-                "Using default JWT_SECRET. Please set a secure JWT_SECRET in production!",
-                UserWarning
-            )
-        return v
-    
-    @field_validator("APP_ENV")
-    @classmethod
-    def validate_app_env(cls, v: str) -> str:
-        allowed = ["development", "staging", "production", "testing"]
-        if v.lower() not in allowed:
-            raise ValueError(f"APP_ENV must be one of: {allowed}")
-        return v.lower()
 
 
 @lru_cache()
 def get_settings() -> Settings:
     """
     Get cached settings instance.
-    
     Uses lru_cache to ensure settings are only loaded once.
-    Call get_settings.cache_clear() to reload settings if needed.
     """
     return Settings()
 

@@ -246,6 +246,20 @@ class DBService:
             staging_id, status, error_message, attempts, metadata
         )
 
+
+
+    def update_staging_status_with_source_id(
+        self,
+        source_id: int,
+        status: str,
+        error_message: str = None,
+        attempts: int = None,
+        metadata: dict = None
+    ):
+        return self.document_repo.update_staging_status_with_source_id(
+            source_id, status, error_message, attempts, metadata
+        )
+
     def get_staging_documents(
         self, 
         user_id: int, 

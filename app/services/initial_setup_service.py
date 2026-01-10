@@ -1,10 +1,3 @@
-"""
-Initial Setup Service
-
-This module handles all initial data setup required for the application to work properly.
-It centralizes all setup operations that should run when the application starts.
-"""
-
 import logging
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -19,26 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class InitialSetupService:
-    """
-    Centralized service for handling all initial data setup.
-    
-    This service orchestrates the creation of:
-    - Default integrations (Gmail, WhatsApp, etc.)
-    - Default features (with credit costs)
-    - Default subscription plans (Starter plan)
-    
-    Usage:
-        setup_service = InitialSetupService()
-        setup_service.run_initial_setup()
-    """
     
     def __init__(self, db: Optional[Session] = None):
-        """
-        Initialize the setup service.
-        
-        Args:
-            db: Optional database session. If not provided, creates a new one.
-        """
         self._db = db
         self._should_close_db = False
         
@@ -48,28 +23,17 @@ class InitialSetupService:
     
     @property
     def db(self) -> Session:
-        """Get the database session."""
         return self._db
     
     def run_initial_setup(self) -> None:
-        """
-        Run all initial setup operations.
-        
-        This is the main entry point that orchestrates all setup tasks.
-        Call this method when the application starts.
-        """
+        """Orchestrates all initial setup tasks for the application."""
         try:
             logger.info("=" * 60)
             logger.info("Starting Initial Setup Process")
             logger.info("=" * 60)
             
-            # Step 1: Create default integrations
             self._setup_default_integrations()
-            
-            # Step 2: Create default features
             self._setup_default_features()
-            
-            # Step 3: Create default plans
             self._setup_default_plans()
             
             logger.info("=" * 60)
@@ -85,16 +49,12 @@ class InitialSetupService:
                 self.db.close()
     
     def _setup_default_integrations(self) -> None:
-        """
-        Create default integrations (Gmail, WhatsApp, etc.) if they don't exist.
-        """
         try:
             logger.info("Setting up default integrations...")
             
             integration_creation_service = IntegrationCreationService(self.db)
             integration_creation_service.create_default_integrations()
             
-            # Verify integrations were created
             integration_count = self.db.query(Integration).count()
             logger.info(f"✓ Integrations setup complete. Total integrations: {integration_count}")
             
@@ -106,16 +66,9 @@ class InitialSetupService:
             )
     
     def _setup_default_features(self) -> None:
-        """
-        Create default features with their credit costs if they don't exist.
-        
-        This ensures all core features like GMAIL_SYNC, EMAIL_PROCESSING, etc.
-        are available in the database.
-        """
         try:
             logger.info("Setting up default features...")
             
-            # Define default feature configurations
             feature_configs = {
                 "GMAIL_SYNC": {
                     "display_name": "Gmail Sync",
@@ -169,13 +122,11 @@ class InitialSetupService:
             
             created_count = 0
             for feature_key, config in feature_configs.items():
-                # Check if feature already exists
                 existing_feature = self.db.query(Feature).filter(
                     Feature.feature_key == feature_key
                 ).first()
                 
                 if not existing_feature:
-                    # Create the feature
                     feature = Feature(
                         feature_key=feature_key,
                         display_name=config["display_name"],
@@ -187,12 +138,10 @@ class InitialSetupService:
                     self.db.add(feature)
                     created_count += 1
             
-            # Commit all features at once
             if created_count > 0:
                 self.db.commit()
                 logger.info(f"✓ Created {created_count} new features")
             
-            # Verify features were created
             feature_count = self.db.query(Feature).count()
             logger.info(f"✓ Features setup complete. Total features: {feature_count}")
             
@@ -205,25 +154,19 @@ class InitialSetupService:
             )
     
     def _setup_default_plans(self) -> None:
-        """
-        Create default subscription plans (Starter plan) if they don't exist.
-        Also links all features to the plan.
-        """
         try:
             logger.info("Setting up default subscription plans...")
             
-            # Check if starter plan already exists
             starter_plan = self.db.query(Plan).filter(Plan.slug == "starter").first()
             
             if not starter_plan:
-                # Create starter plan
                 starter_plan = Plan(
                     name="Starter Plan",
                     slug="starter",
                     price=0.0,
                     currency="INR",
                     billing_cycle="trial",
-                    total_credits=100,  # Give 100 credits to start with
+                    total_credits=100,
                     description="Free starter plan for new users",
                     is_active=True,
                     display_order=1
@@ -236,10 +179,8 @@ class InitialSetupService:
             else:
                 logger.info(f"✓ Starter plan already exists: '{starter_plan.name}' (ID: {starter_plan.id}, Credits: {starter_plan.total_credits})")
             
-            # Link features to the starter plan
             self._link_features_to_plan(starter_plan)
             
-            # Verify plans were created
             plan_count = self.db.query(Plan).count()
             logger.info(f"✓ Plans setup complete. Total plans: {plan_count}")
             
@@ -251,41 +192,28 @@ class InitialSetupService:
             )
     
     def _link_features_to_plan(self, plan: Plan) -> None:
-        """
-        Link all available features to the given plan.
-        
-        Args:
-            plan: The Plan object to link features to
-            
-        Raises:
-            DatabaseError: If linking features fails
-        """
         try:
             logger.info(f"Linking features to plan '{plan.name}'...")
             
-            # Get all active features
             all_features = self.db.query(Feature).filter(Feature.is_active == True).all()
             
             linked_count = 0
             for feature in all_features:
-                # Check if the feature is already linked to the plan
                 existing_link = self.db.query(PlanFeature).filter(
                     PlanFeature.plan_id == plan.id,
                     PlanFeature.feature_id == feature.id
                 ).first()
                 
                 if not existing_link:
-                    # Create the link
                     plan_feature = PlanFeature(
                         plan_id=plan.id,
                         feature_id=feature.id,
                         is_enabled=True,
-                        custom_credit_cost=None  # Use feature's default credit cost
+                        custom_credit_cost=None
                     )
                     self.db.add(plan_feature)
                     linked_count += 1
             
-            # Commit all links at once
             if linked_count > 0:
                 self.db.commit()
                 logger.info(f"✓ Linked {linked_count} features to plan '{plan.name}'")
@@ -306,12 +234,6 @@ class InitialSetupService:
             )
     
     def verify_setup(self) -> dict:
-        """
-        Verify that all initial setup was completed successfully.
-        
-        Returns:
-            dict: Status of each component with counts
-        """
         try:
             integration_count = self.db.query(Integration).filter(Integration.is_active == True).count()
             feature_count = self.db.query(Feature).filter(Feature.is_active == True).count()
@@ -340,7 +262,6 @@ class InitialSetupService:
             return {"overall_status": "ERROR", "error": str(e)}
 
 
-# Convenience function for easy import and use
 def run_initial_setup(db: Optional[Session] = None) -> None:
     setup_service = InitialSetupService(db)
     setup_service.run_initial_setup()

@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { AttachmentViewerModal } from "@/components/AttachmentViewerModal";
+import { DocumentDetailsModal } from "@/components/DocumentDetailsModal";
 import { 
   FileText, 
   Clock, 
@@ -18,9 +19,11 @@ import {
   Filter,
   FolderOpen,
   Eye,
+  Info,
 } from "lucide-react";
 import { api, StagingDocument } from "@/lib/api";
 import { format, formatDistanceToNow } from "date-fns";
+import { useAnalytics, EVENTS } from "@/lib/analytics";
 
 const STAGING_ITEMS_PER_PAGE = 10;
 
@@ -74,6 +77,7 @@ const formatFileSize = (bytes: number | null): string => {
 };
 
 const Files = () => {
+  const { trackEvent } = useAnalytics();
   const [stagingPage, setStagingPage] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedAttachment, setSelectedAttachment] = useState<{
@@ -81,6 +85,8 @@ const Files = () => {
     filename: string;
     mimeType: string;
   } | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<StagingDocument | null>(null);
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
 
   // Fetch staging documents
   const { data: stagingData, isLoading: isStagingLoading, refetch: refetchStaging } = useQuery({
@@ -106,9 +112,53 @@ const Files = () => {
     setStagingPage(0);
   };
 
-  // Handle viewing a file
-  const handleViewFile = (doc: StagingDocument) => {
+  // Handle row click to show details
+  const handleRowClick = (doc: StagingDocument) => {
+    trackEvent('file_info_viewed', {
+      source: 'files_page',
+      document_id: doc.id,
+      filename: doc.filename,
+      document_type: doc.document_type,
+      processing_status: doc.processing_status,
+      file_size: doc.file_size,
+      source_type: doc.source_type,
+    });
+    setSelectedDocument(doc);
+    setIsDetailsModalOpen(true);
+  };
+
+  // Handle viewing a file from details modal
+  const handleViewFileFromModal = () => {
+    if (selectedDocument?.s3_key) {
+      trackEvent(EVENTS.FILE_VIEWED, {
+        source: 'files_page_modal',
+        document_id: selectedDocument.id,
+        filename: selectedDocument.filename,
+        mime_type: selectedDocument.mime_type,
+        file_size: selectedDocument.file_size,
+      });
+      setSelectedAttachment({
+        s3Url: selectedDocument.s3_key,
+        filename: selectedDocument.filename,
+        mimeType: selectedDocument.mime_type || "application/octet-stream",
+      });
+      setIsDetailsModalOpen(false);
+    }
+  };
+
+  // Handle viewing a file directly
+  const handleViewFile = (doc: StagingDocument, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent row click
     if (!doc.s3_key) return;
+    
+    trackEvent(EVENTS.FILE_VIEWED, {
+      source: 'files_page_direct',
+      document_id: doc.id,
+      filename: doc.filename,
+      mime_type: doc.mime_type,
+      file_size: doc.file_size,
+      processing_status: doc.processing_status,
+    });
     
     setSelectedAttachment({
       s3Url: doc.s3_key,
@@ -167,7 +217,14 @@ const Files = () => {
             </div>
 
             {/* Status Filter */}
-            <Select value={statusFilter} onValueChange={handleFilterChange}>
+            <Select value={statusFilter} onValueChange={(value) => {
+              trackEvent(EVENTS.FILTER_APPLIED, {
+                filter_type: 'status',
+                filter_value: value,
+                source: 'files_page',
+              });
+              handleFilterChange(value);
+            }}>
               <SelectTrigger className="w-full sm:w-[180px]">
                 <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="Filter by status" />
@@ -229,7 +286,8 @@ const Files = () => {
                       return (
                         <TableRow 
                           key={doc.id}
-                          className="hover:bg-muted/30 transition-colors"
+                          onClick={() => handleRowClick(doc)}
+                          className="hover:bg-muted/30 transition-colors cursor-pointer"
                         >
                           <TableCell className="text-muted-foreground font-medium">
                             {serialNumber}
@@ -294,19 +352,31 @@ const Files = () => {
                             )}
                           </TableCell>
                           <TableCell className="text-right">
-                            {canView ? (
+                            <div className="flex items-center justify-end gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => handleViewFile(doc)}
-                                className="h-8 w-8 hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 transition-colors"
-                                title="View file"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRowClick(doc);
+                                }}
+                                className="h-8 w-8 hover:bg-primary/10 text-primary transition-colors"
+                                title="View details"
                               >
-                                <Eye className="h-4 w-4" />
+                                <Info className="h-4 w-4" />
                               </Button>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">—</span>
-                            )}
+                              {canView && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={(e) => handleViewFile(doc, e)}
+                                  className="h-8 w-8 hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 transition-colors"
+                                  title="View file"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -354,6 +424,17 @@ const Files = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Document Details Modal */}
+      <DocumentDetailsModal
+        document={selectedDocument}
+        isOpen={isDetailsModalOpen}
+        onClose={() => {
+          setIsDetailsModalOpen(false);
+          setSelectedDocument(null);
+        }}
+        onViewFile={handleViewFileFromModal}
+      />
 
       {/* Attachment Viewer Modal */}
       <AttachmentViewerModal

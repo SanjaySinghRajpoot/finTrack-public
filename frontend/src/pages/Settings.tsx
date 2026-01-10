@@ -333,333 +333,333 @@ const Settings = () => {
           <h2 className="text-xl font-semibold text-foreground">Connected Integrations</h2>
         </div>
 
-        {/* Gmail Integration Component - Only show if not in integrations list */}
-        {!settings.integrations.some(i => i.integration_slug === "gmail") && (
-          <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
-            <GmailIntegration 
-              isConnected={false} 
-              onStatusChange={fetchSettings}
-            />
-          </div>
-        )}
+        <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
+          {/* Always render Gmail using the GmailIntegration component */}
+          {(() => {
+            const gmailIntegration = settings.integrations.find(i => i.integration_slug === "gmail");
+            return (
+              <GmailIntegration 
+                isConnected={gmailIntegration?.status.toLowerCase() === 'connected'} 
+                onStatusChange={fetchSettings}
+              />
+            );
+          })()}
 
-        {settings.integrations.length > 0 && (
-          <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-2">
-            {settings.integrations.map((integration) => (
-              <Dialog key={integration.integration_id}>
-                <DialogTrigger asChild>
-                  <Card className="shadow-lg hover:shadow-xl transition-all duration-300 border-border bg-gradient-to-br from-primary/5 to-accent/10 dark:from-primary/10 dark:to-accent/5 cursor-pointer group hover:scale-[1.02] hover:border-primary/30">
-                    <CardHeader className="border-b bg-gradient-to-r from-primary/8 to-accent/15 dark:from-primary/15 dark:to-accent/10 group-hover:from-primary/12 group-hover:to-accent/20 transition-all duration-300">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2.5 rounded-xl bg-primary/15 group-hover:bg-primary/25 transition-all duration-300 shrink-0">
-                            {getIntegrationIcon(integration.integration_type)}
-                          </div>
-                          <div>
-                            <CardTitle className="text-lg group-hover:text-primary transition-colors">
-                              {integration.integration_name}
-                            </CardTitle>
-                            <p className="text-sm text-muted-foreground">{integration.provider} • {integration.category}</p>
-                          </div>
+          {/* Render other (non-Gmail) integrations */}
+          {settings.integrations.filter(i => i.integration_slug !== "gmail").map((integration) => (
+            <Dialog key={integration.integration_id}>
+              <DialogTrigger asChild>
+                <Card className="shadow-lg hover:shadow-xl transition-all duration-300 border-border bg-gradient-to-br from-primary/5 to-accent/10 dark:from-primary/10 dark:to-accent/5 cursor-pointer group hover:scale-[1.02] hover:border-primary/30">
+                  <CardHeader className="border-b bg-gradient-to-r from-primary/8 to-accent/15 dark:from-primary/15 dark:to-accent/10 group-hover:from-primary/12 group-hover:to-accent/20 transition-all duration-300">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-primary/15 group-hover:bg-primary/25 transition-all duration-300 shrink-0">
+                          {getIntegrationIcon(integration.integration_type)}
                         </div>
-                        <div className="flex flex-col gap-1 items-end">
-                          {getStatusBadge(integration.status)}
-                          {integration.can_use_integration ? (
-                            <div className="flex items-center gap-1 text-xs text-green-600">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Available
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 text-xs text-destructive">
-                              <AlertCircle className="h-3 w-3" />
-                              Unavailable
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1 text-xs text-primary group-hover:text-primary/80 transition-colors">
-                            <ExternalLink className="h-3 w-3" />
-                            View Details
-                          </div>
+                        <div>
+                          <CardTitle className="text-lg group-hover:text-primary transition-colors">
+                            {integration.integration_name}
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground">{integration.provider} • {integration.category}</p>
                         </div>
                       </div>
-                    </CardHeader>
-                    <CardContent className="p-6 space-y-4">
-                      {integration.error_message && (
-                        <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-                          <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                          <p className="text-sm text-destructive">{integration.error_message}</p>
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Clock className="h-3.5 w-3.5" />
-                            <span>Last Sync</span>
+                      <div className="flex flex-col gap-1 items-end">
+                        {getStatusBadge(integration.status)}
+                        {integration.can_use_integration ? (
+                          <div className="flex items-center gap-1 text-xs text-green-600">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Available
                           </div>
-                          <p className="text-foreground font-medium pl-5">
-                            {integration.last_synced_at 
-                              ? format(new Date(integration.last_synced_at), "MMM dd, yyyy")
-                              : "Never"}
-                          </p>
-                        </div>
-
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            <span>Total Syncs</span>
-                          </div>
-                          <p className="text-foreground font-medium pl-5">
-                            {integration.total_syncs} completed
-                          </p>
-                        </div>
-                      </div>
-
-                      {integration.features.length > 0 && (
-                        <div className="pt-2 border-t border-border">
-                          <div className="flex flex-wrap gap-2">
-                            {integration.features.map((feature) => (
-                              <div 
-                                key={feature.feature_key}
-                                className="flex items-center gap-1 px-2 py-1 rounded bg-muted/50 text-xs"
-                              >
-                                {feature.can_use ? (
-                                  <CheckCircle2 className="h-3 w-3 text-green-500" />
-                                ) : (
-                                  <AlertCircle className="h-3 w-3 text-destructive" />
-                                )}
-                                <span className="text-foreground font-medium">{feature.display_name}</span>
-                                <Badge variant="outline" className="text-xs px-1 py-0">
-                                  {feature.credit_cost}
-                                </Badge>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Connect/Disconnect Button based on status */}
-                      <div className="pt-4 border-t border-border">
-                        {integration.status.toLowerCase() === 'connected' ? (
-                          <Button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowDelinkDialog(integration.integration_slug);
-                            }}
-                            disabled={delinkingIntegration === integration.integration_slug}
-                            variant="destructive"
-                            size="sm"
-                            className="w-full"
-                          >
-                            {delinkingIntegration === integration.integration_slug ? (
-                              <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Disconnecting...
-                              </>
-                            ) : (
-                              <>
-                                <Unlink className="mr-2 h-4 w-4" />
-                                Disconnect {integration.integration_name}
-                              </>
-                            )}
-                          </Button>
                         ) : (
-                          <Button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleLinkIntegration(integration.integration_slug);
-                            }}
-                            disabled={linkingIntegration === integration.integration_slug}
-                            variant="default"
-                            size="sm"
-                            className="w-full"
-                          >
-                            {linkingIntegration === integration.integration_slug ? (
-                              <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Connecting...
-                              </>
-                            ) : (
-                              <>
-                                <Link2 className="mr-2 h-4 w-4" />
-                                Connect {integration.integration_name}
-                              </>
-                            )}
-                          </Button>
+                          <div className="flex items-center gap-1 text-xs text-destructive">
+                            <AlertCircle className="h-3 w-3" />
+                            Unavailable
+                          </div>
                         )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </DialogTrigger>
-
-                {/* Detailed Modal */}
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="p-2 rounded-lg bg-primary/15">
-                        {getIntegrationIcon(integration.integration_type)}
-                      </div>
-                      <div>
-                        <DialogTitle className="text-xl">{integration.integration_name}</DialogTitle>
-                        <DialogDescription className="text-base mt-1">
-                          {integration.description}
-                        </DialogDescription>
-                      </div>
-                    </div>
-                  </DialogHeader>
-
-                  <div className="space-y-6">
-                    {/* Status and Basic Info */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-3">
-                        <h4 className="font-semibold text-foreground border-b pb-1">Connection Status</h4>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Status:</span>
-                            {getStatusBadge(integration.status)}
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Availability:</span>
-                            {integration.can_use_integration ? (
-                              <Badge variant="default" className="text-xs">
-                                <CheckCircle2 className="h-3 w-3 mr-1" />
-                                Available
-                              </Badge>
-                            ) : (
-                              <Badge variant="destructive" className="text-xs">
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                Unavailable
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Provider:</span>
-                            <Badge variant="outline">{integration.provider}</Badge>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Category:</span>
-                            <Badge variant="outline" className="capitalize">{integration.category}</Badge>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <h4 className="font-semibold text-foreground border-b pb-1">Sync Information</h4>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Last Synced:</span>
-                            <span className="font-medium">
-                              {integration.last_synced_at 
-                                ? format(new Date(integration.last_synced_at), "MMM dd, yyyy 'at' HH:mm")
-                                : "Never synced"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Next Sync:</span>
-                            <span className="font-medium">
-                              {integration.next_sync_at 
-                                ? format(new Date(integration.next_sync_at), "MMM dd, yyyy 'at' HH:mm")
-                                : "Not scheduled"}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Sync Interval:</span>
-                            <span className="font-medium">Every {Math.round(integration.sync_interval_minutes / 60)} hours</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Total Syncs:</span>
-                            <span className="font-medium">{integration.total_syncs} completed</span>
-                          </div>
-                          {integration.last_sync_duration && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Last Duration:</span>
-                              <span className="font-medium">{integration.last_sync_duration}ms</span>
-                            </div>
-                          )}
+                        <div className="flex items-center gap-1 text-xs text-primary group-hover:text-primary/80 transition-colors">
+                          <ExternalLink className="h-3 w-3" />
+                          View Details
                         </div>
                       </div>
                     </div>
-
-                    {/* Error Message */}
+                  </CardHeader>
+                  <CardContent className="p-6 space-y-4">
                     {integration.error_message && (
-                      <div className="space-y-2">
-                        <h4 className="font-semibold text-destructive border-b border-destructive/20 pb-1">Error Details</h4>
-                        <div className="flex items-start gap-2 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
-                          <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-                          <p className="text-sm text-destructive">{integration.error_message}</p>
-                        </div>
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                        <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                        <p className="text-sm text-destructive">{integration.error_message}</p>
                       </div>
                     )}
 
-                    {/* Features Section */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>Last Sync</span>
+                        </div>
+                        <p className="text-foreground font-medium pl-5">
+                          {integration.last_synced_at 
+                            ? format(new Date(integration.last_synced_at), "MMM dd, yyyy")
+                            : "Never"}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Total Syncs</span>
+                        </div>
+                        <p className="text-foreground font-medium pl-5">
+                          {integration.total_syncs} completed
+                        </p>
+                      </div>
+                    </div>
+
                     {integration.features.length > 0 && (
-                      <div className="space-y-3">
-                        <h4 className="font-semibold text-foreground border-b pb-1">
-                          Available Features ({integration.features.length})
-                        </h4>
-                        <div className="space-y-3">
+                      <div className="pt-2 border-t border-border">
+                        <div className="flex flex-wrap gap-2">
                           {integration.features.map((feature) => (
                             <div 
                               key={feature.feature_key}
-                              className="flex items-start gap-3 p-4 rounded-lg border bg-muted/20"
+                              className="flex items-center gap-1 px-2 py-1 rounded bg-muted/50 text-xs"
                             >
-                              <div className="shrink-0 mt-1">
-                                {feature.can_use ? (
-                                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                                ) : (
-                                  <AlertCircle className="h-5 w-5 text-destructive" />
-                                )}
-                              </div>
-                              <div className="flex-1 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <h5 className="font-medium text-foreground">{feature.display_name}</h5>
-                                  <Badge variant="outline">
-                                    {feature.credit_cost} credit{feature.credit_cost !== 1 ? 's' : ''}
-                                  </Badge>
-                                </div>
-                                <p className="text-sm text-muted-foreground">{feature.description}</p>
-                                <div className="flex items-center gap-4 text-xs">
-                                  <span className="text-muted-foreground">Category: <span className="font-medium capitalize">{feature.category}</span></span>
-                                  <span className="text-muted-foreground">Status: <span className="font-medium">{feature.usage_reason}</span></span>
-                                </div>
-                              </div>
+                              {feature.can_use ? (
+                                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <AlertCircle className="h-3 w-3 text-destructive" />
+                              )}
+                              <span className="text-foreground font-medium">{feature.display_name}</span>
+                              <Badge variant="outline" className="text-xs px-1 py-0">
+                                {feature.credit_cost}
+                              </Badge>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
 
-                    {/* Connection Details */}
-                    <div className="space-y-3 pt-4 border-t">
-                      <h4 className="font-semibold text-foreground border-b pb-1">Connection Details</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Integration ID:</span>
-                          <p className="font-mono text-xs mt-1 p-2 bg-muted rounded">
-                            {integration.integration_id}
-                          </p>
+                    {/* Connect/Disconnect Button based on status */}
+                    <div className="pt-4 border-t border-border">
+                      {integration.status.toLowerCase() === 'connected' ? (
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowDelinkDialog(integration.integration_slug);
+                          }}
+                          disabled={delinkingIntegration === integration.integration_slug}
+                          variant="destructive"
+                          size="sm"
+                          className="w-full"
+                        >
+                          {delinkingIntegration === integration.integration_slug ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Disconnecting...
+                            </>
+                          ) : (
+                            <>
+                              <Unlink className="mr-2 h-4 w-4" />
+                              Disconnect {integration.integration_name}
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLinkIntegration(integration.integration_slug);
+                          }}
+                          disabled={linkingIntegration === integration.integration_slug}
+                          variant="default"
+                          size="sm"
+                          className="w-full"
+                        >
+                          {linkingIntegration === integration.integration_slug ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="mr-2 h-4 w-4" />
+                              Connect {integration.integration_name}
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </DialogTrigger>
+
+              {/* Detailed Modal */}
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 rounded-lg bg-primary/15">
+                      {getIntegrationIcon(integration.integration_type)}
+                    </div>
+                    <div>
+                      <DialogTitle className="text-xl">{integration.integration_name}</DialogTitle>
+                      <DialogDescription className="text-base mt-1">
+                        {integration.description}
+                      </DialogDescription>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                <div className="space-y-6">
+                  {/* Status and Basic Info */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-foreground border-b pb-1">Connection Status</h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Status:</span>
+                          {getStatusBadge(integration.status)}
                         </div>
-                        <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Availability:</span>
+                          {integration.can_use_integration ? (
+                            <Badge variant="default" className="text-xs">
+                              <CheckCircle2 className="h-3 w-3 mr-1" />
+                              Available
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-xs">
+                              <AlertCircle className="h-3 w-3 mr-1" />
+                              Unavailable
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Provider:</span>
+                          <Badge variant="outline">{integration.provider}</Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Category:</span>
+                          <Badge variant="outline" className="capitalize">{integration.category}</Badge>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-foreground border-b pb-1">Sync Information</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Last Synced:</span>
+                          <span className="font-medium">
+                            {integration.last_synced_at 
+                              ? format(new Date(integration.last_synced_at), "MMM dd, yyyy 'at' HH:mm")
+                              : "Never synced"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Next Sync:</span>
+                          <span className="font-medium">
+                            {integration.next_sync_at 
+                              ? format(new Date(integration.next_sync_at), "MMM dd, yyyy 'at' HH:mm")
+                              : "Not scheduled"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Sync Interval:</span>
+                          <span className="font-medium">Every {Math.round(integration.sync_interval_minutes / 60)} hours</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Total Syncs:</span>
+                          <span className="font-medium">{integration.total_syncs} completed</span>
+                        </div>
+                        {integration.last_sync_duration && (
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Created:</span>
-                            <span className="font-medium">
-                              {format(new Date(integration.created_at), "MMM dd, yyyy 'at' HH:mm")}
-                            </span>
+                            <span className="text-muted-foreground">Last Duration:</span>
+                            <span className="font-medium">{integration.last_sync_duration}ms</span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Last Updated:</span>
-                            <span className="font-medium">
-                              {format(new Date(integration.updated_at), "MMM dd, yyyy 'at' HH:mm")}
-                            </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Error Message */}
+                  {integration.error_message && (
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-destructive border-b border-destructive/20 pb-1">Error Details</h4>
+                      <div className="flex items-start gap-2 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                        <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                        <p className="text-sm text-destructive">{integration.error_message}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Features Section */}
+                  {integration.features.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-foreground border-b pb-1">
+                        Available Features ({integration.features.length})
+                      </h4>
+                      <div className="space-y-3">
+                        {integration.features.map((feature) => (
+                          <div 
+                            key={feature.feature_key}
+                            className="flex items-start gap-3 p-4 rounded-lg border bg-muted/20"
+                          >
+                            <div className="shrink-0 mt-1">
+                              {feature.can_use ? (
+                                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                              ) : (
+                                <AlertCircle className="h-5 w-5 text-destructive" />
+                              )}
+                            </div>
+                            <div className="flex-1 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <h5 className="font-medium text-foreground">{feature.display_name}</h5>
+                                <Badge variant="outline">
+                                  {feature.credit_cost} credit{feature.credit_cost !== 1 ? 's' : ''}
+                                </Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{feature.description}</p>
+                              <div className="flex items-center gap-4 text-xs">
+                                <span className="text-muted-foreground">Category: <span className="font-medium capitalize">{feature.category}</span></span>
+                                <span className="text-muted-foreground">Status: <span className="font-medium">{feature.usage_reason}</span></span>
+                              </div>
+                            </div>
                           </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Connection Details */}
+                  <div className="space-y-3 pt-4 border-t">
+                    <h4 className="font-semibold text-foreground border-b pb-1">Connection Details</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Integration ID:</span>
+                        <p className="font-mono text-xs mt-1 p-2 bg-muted rounded">
+                          {integration.integration_id}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Created:</span>
+                          <span className="font-medium">
+                            {format(new Date(integration.created_at), "MMM dd, yyyy 'at' HH:mm")}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Last Updated:</span>
+                          <span className="font-medium">
+                            {format(new Date(integration.updated_at), "MMM dd, yyyy 'at' HH:mm")}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
-                </DialogContent>
-              </Dialog>
-            ))}
-          </div>
-        )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          ))}
+        </div>
       </div>
 
       {/* Delink Confirmation Dialog */}

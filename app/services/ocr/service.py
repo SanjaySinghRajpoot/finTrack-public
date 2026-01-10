@@ -41,7 +41,7 @@ class OCRService:
         self.schema = build_schema_with_custom_fields(db, user_id)
         self.validator = JSONValidator(self.schema, REQUIRED_FIELDS)
         
-        self.api_key = api_key or settings.NANONETS_API_KEY or settings.DOCSTRANGE_API_KEY
+        self.api_key = api_key or settings.DOCSTRANGE_API_KEY
         if self.api_key:
             self.logger.info("OCR Service initialized for NanoNets (API key provided)")
         else:

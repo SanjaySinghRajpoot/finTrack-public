@@ -7,7 +7,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { StatCardSkeleton } from "@/components/ui/stat-card-skeleton";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { ExpenseList } from "@/components/ExpenseList";
-import { DollarSign, TrendingDown, Calendar, TrendingUp, Plus, Receipt, Upload, Lightbulb, Target, PiggyBank, TrendingUpIcon, X, Mail, Sparkles, CheckCircle2, ArrowRight, FileText, PieChart, BarChart3, Clock } from "lucide-react";
+import { Coins, TrendingDown, Calendar, TrendingUp, Plus, Receipt, Upload, Lightbulb, Target, PiggyBank, TrendingUpIcon, X, Mail, Sparkles, CheckCircle2, ArrowRight, FileText, PieChart, BarChart3, Clock } from "lucide-react";
 import { api, CreateExpenseRequest, Expense, ImportedExpense } from "@/lib/api";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -37,14 +37,14 @@ const HeaderSkeleton = () => (
 const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; onClose: () => void }) => {
   const navigate = useNavigate();
 
-  const quickStartSteps = [
+  const quickStartFeatures = [
     {
       icon: Plus,
       title: "Add Your First Expense",
       description: "Start by manually adding an expense to see how it works",
       action: "Add Expense",
       color: "bg-gradient-to-br from-primary to-primary/80",
-      onClick: onAddExpense
+      onClick: () => { onAddExpense(); onClose(); }
     },
     {
       icon: Mail,
@@ -52,7 +52,7 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
       description: "Automatically import receipts and invoices from your emails",
       action: "Import Emails",
       color: "bg-gradient-to-br from-secondary to-secondary/80",
-      onClick: () => navigate("/settings")
+      onClick: () => { onClose(); navigate("/settings"); }
     },
     {
       icon: Upload,
@@ -60,7 +60,7 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
       description: "Upload PDF receipts and invoices for automatic processing",
       action: "Upload Files",
       color: "bg-gradient-to-br from-accent to-accent/80",
-      onClick: () => navigate("/transactions")
+      onClick: () => { onClose(); navigate("/transactions"); }
     }
   ];
 
@@ -117,23 +117,22 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
           
           <p className="text-base md:text-lg text-muted-foreground mb-8 md:mb-10 max-w-2xl mx-auto leading-relaxed">
             Track expenses, analyze spending patterns, and take control of your finances with ease.
-            Let's get you started in just a few clicks!
           </p>
 
           <div className="inline-flex items-center gap-2 text-xs md:text-sm text-muted-foreground bg-primary/5 px-3 md:px-4 py-1.5 md:py-2 rounded-full border border-primary/10">
             <CheckCircle2 className="h-3.5 w-3.5 md:h-4 md:w-4 text-primary" />
-            <span>No expenses yet • Start tracking to unlock powerful insights</span>
+            <span>Get started with your first transaction</span>
           </div>
         </CardContent>
       </Card>
 
-      {/* Quick Start Guide */}
+      {/* Quick Start Features */}
       <Card className="shadow-elevated border-border/50">
         <CardHeader className="bg-gradient-to-r from-card to-muted/20 border-b pb-4 md:pb-6">
           <div className="text-center">
             <CardTitle className="text-2xl md:text-3xl font-bold text-foreground flex items-center justify-center gap-2 md:gap-3 mb-2 md:mb-3">
               <CheckCircle2 className="h-6 w-6 md:h-8 md:w-8 text-primary" />
-              Get Started in 3 Easy Steps
+              Quick Start
             </CardTitle>
             <p className="text-muted-foreground text-base md:text-lg">
               Choose how you want to begin tracking your expenses
@@ -142,31 +141,25 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
         </CardHeader>
         <CardContent className="p-6 md:p-8">
           <div className="grid gap-4 md:gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {quickStartSteps.map((step, index) => (
+            {quickStartFeatures.map((feature, index) => (
               <div 
                 key={index}
                 className="group relative p-5 md:p-6 rounded-xl md:rounded-2xl border-2 border-border/50 hover:border-primary/50 transition-smooth hover:shadow-lg cursor-pointer bg-gradient-to-br from-card to-muted/5 hover:from-primary/5 hover:to-primary/10"
-                onClick={step.onClick}
+                onClick={feature.onClick}
               >
                 <div className="text-center">
-                  <div className="inline-flex items-center justify-center mb-3 md:mb-4">
-                    <div className={`p-3 md:p-4 rounded-xl md:rounded-2xl ${step.color} shadow-md group-hover:shadow-lg group-hover:scale-110 transition-smooth`}>
-                      <step.icon className="h-6 w-6 md:h-8 md:w-8 text-primary-foreground" />
+                  <div className="inline-flex items-center justify-center mb-4 md:mb-5">
+                    <div className={`p-3 md:p-4 rounded-xl md:rounded-2xl ${feature.color} shadow-md group-hover:shadow-lg group-hover:scale-110 transition-smooth`}>
+                      <feature.icon className="h-6 w-6 md:h-8 md:w-8 text-primary-foreground" />
                     </div>
                   </div>
                   
-                  <div className="mb-2 md:mb-3">
-                    <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 md:px-3 py-1 md:py-1.5 rounded-full border border-primary/20">
-                      Step {index + 1}
-                    </span>
-                  </div>
-                  
                   <h3 className="text-lg md:text-xl font-bold text-foreground mb-2 md:mb-3 group-hover:text-primary transition-colors">
-                    {step.title}
+                    {feature.title}
                   </h3>
                   
                   <p className="text-xs md:text-sm text-muted-foreground mb-4 md:mb-5 leading-relaxed">
-                    {step.description}
+                    {feature.description}
                   </p>
                   
                   <Button 
@@ -174,7 +167,7 @@ const WelcomeScreen = ({ onAddExpense, onClose }: { onAddExpense: () => void; on
                     size="sm"
                     className="text-primary hover:text-primary hover:bg-primary/10 font-semibold group-hover:translate-x-1 transition-transform text-xs md:text-sm"
                   >
-                    {step.action}
+                    {feature.action}
                     <ArrowRight className="h-3.5 w-3.5 md:h-4 md:w-4 ml-1.5 md:ml-2" />
                   </Button>
                 </div>
@@ -292,20 +285,24 @@ const DashboardAnalytics = () => {
   });
 
   // Fetch expenses - main data, higher priority
-  const { data: expenses = [], isLoading } = useQuery({
+  const { data: expensesResponse, isLoading } = useQuery({
     queryKey: ["expenses"],
-    queryFn: api.getExpenses,
+    queryFn: () => api.getExpenses(100, 0), // Fetch first 100 for dashboard
     retry: false,
     staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
+  const expenses = expensesResponse?.data || [];
+
   // Fetch imported expenses - can load in background
-  const { data: importedExpenses = [] } = useQuery({
+  const { data: importedExpensesResponse } = useQuery({
     queryKey: ["importedExpenses"],
-    queryFn: api.getImportedExpenses,
+    queryFn: () => api.getImportedExpenses(100, 0), // Fetch first 100 for dashboard
     retry: false,
     staleTime: 30 * 1000,
   });
+
+  const importedExpenses = importedExpensesResponse?.data || [];
 
   // Create expense mutation
   const createMutation = useMutation({
@@ -371,7 +368,7 @@ const DashboardAnalytics = () => {
 
   const getUserName = () => {
     if (user?.first_name) return user.first_name;
-    return "there"; // Friendlier default
+    return "User"; // Friendlier default
   };
 
   const getCurrentDate = () => {
@@ -526,7 +523,7 @@ const DashboardAnalytics = () => {
                 <StatCard
                   title="Monthly Total"
                   value={`${monthlyTotal.toFixed(2)}`}
-                  icon={DollarSign}
+                  icon={Coins}
                 />
                 <StatCard
                   title="Total Expenses"
@@ -632,7 +629,7 @@ const DashboardAnalytics = () => {
                 </div>
                 <div className="text-center p-3 rounded-lg bg-gradient-to-br from-purple-500/10 to-purple-500/5">
                   <div className="flex items-center justify-center gap-2 mb-1">
-                    <DollarSign className="h-4 w-4 text-purple-600" />
+                    <Coins className="h-4 w-4 text-purple-600" />
                     <p className="text-xs text-muted-foreground">Daily Avg</p>
                   </div>
                   <p className="text-lg font-bold text-foreground">

@@ -129,7 +129,7 @@ class FileController:
         
         try:
             from app.models.scheme import ProcessedFileData, FileMetadataResponse
-            from app.services.file_service import FileProcessor
+            from app.services.file_processor_service import FileProcessor
             from app.models.models import DocumentStaging
             
             db_service = DBService(db)
@@ -229,7 +229,9 @@ class FileController:
         upload_notes = kwargs.get('upload_notes')
         
         try:
-            from app.services.file_service import FileProcessor, FileHashUtils, DocumentProcessor
+            from app.services.file_processor_service import FileProcessor
+            from app.services.document_processor_service import DocumentProcessor
+            from app.utils.utils import FileHashUtils
             
             file_service = FileService() # Instantiate FileService
 

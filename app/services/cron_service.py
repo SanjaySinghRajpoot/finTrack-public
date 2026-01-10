@@ -15,7 +15,7 @@ from app.services.db_service import DBService
 from app.services.gmail_service import GmailClient
 from app.services.llm_service import LLMService
 from app.services.token_service import TokenService
-from app.services.file_service import FileProcessor
+from app.services.file_processor_service import FileProcessor
 from app.services.subscription_service import SubscriptionService
 from app.models.models import Feature
 
@@ -173,16 +173,16 @@ class Every24HoursCronJob(BaseCronJob):
                     logger.warning(f"⚠️ Skipping user {user_id}: No valid access token found.")
                     continue
 
-                gmail_client = GmailClient(access_token, context.db_service, user_id)
-
-                # Run Gmail sync
-                sync_result = await gmail_client.fetch_emails()
-                
-                # Log results
-                if sync_result and len(sync_result) > 0:
-                    logger.info(f"✅ Gmail sync completed for user {user_id}. Credits used: {credit_result.credits_deducted}, Remaining: {credit_result.remaining_credits}, Emails processed: {len(sync_result)}")
-                else:
-                    logger.info(f"📭 No new emails found for user {user_id}. Credits already deducted.")
+                # Use context manager to ensure proper cleanup
+                async with GmailClient(access_token, context.db_service, user_id) as gmail_client:
+                    # Run Gmail sync
+                    sync_result = await gmail_client.fetch_emails()
+                    
+                    # Log results
+                    if sync_result and len(sync_result) > 0:
+                        logger.info(f"✅ Gmail sync completed for user {user_id}. Credits used: {credit_result.credits_deducted}, Remaining: {credit_result.remaining_credits}, Emails processed: {len(sync_result)}")
+                    else:
+                        logger.info(f"📭 No new emails found for user {user_id}. Credits already deducted.")
 
             except Exception as user_error:
                 logger.error(f"❌ Error processing user {user_id}: {str(user_error)}")
@@ -239,13 +239,9 @@ class IsEmailProcessedCheckCRON(BaseCronJob):
                 "has_attachments": has_attachments
             })
 
-            # Call the LLM service - wrap sync call in executor
+            # Call the LLM service - Pass DBService instance, not database session
             llm_service = LLMService(email.user_id, context.db_service)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: llm_service.llm_batch_processing(processed_emails)
-            )
+            await llm_service.llm_batch_processing(processed_emails)
 
 
 class DocumentStagingProcessorCron(BaseCronJob):
@@ -259,7 +255,7 @@ class DocumentStagingProcessorCron(BaseCronJob):
 
     def get_trigger(self):
         """Run every 5 minutes"""
-        return IntervalTrigger(seconds=300)
+        return IntervalTrigger(seconds=6)
 
     def get_job_description(self) -> str:
         return "Document Staging Processor CRON"
@@ -295,170 +291,119 @@ class DocumentStagingProcessorCron(BaseCronJob):
 
     async def _process_email_documents_batch(self, db_service: DBService, email_documents: list):
         """
-        Process email documents in batch using llm_batch_processing.
-        Handles both attachment-based and content-based emails.
-        Fetches all data using source_id from the Source table.
+        Simplified batch processing for email documents.
+        Delegates all processing logic to DocumentProcessor.
         """
-        # update and test this function once for the batch processing -> need testing here
         try:
-            processed_emails = []
-            
             for doc in email_documents:
                 try:
-                    # Mark as in progress
-                    db_service.update_staging_status(
-                        staging_id=doc.id,
-                        status="IN_PROGRESS"
-                    )
-                    
                     # Fetch email using source_id
                     email = db_service.get_email_by_source_id(doc.source_id)
                     if not email:
                         raise Exception(f"Email not found for source_id {doc.source_id}")
                     
-                    # Build email payload based on whether it has attachments
                     has_attachments = doc.meta_data.get("has_attachment", False)
                     
                     if has_attachments:
-                        # Get attachment using source_id
-                        attachment_id = doc.meta_data.get("attachment_id")
-                        
-                        if attachment_id:
-                            attachment = db_service.get_attachment_by_id(attachment_id)
-                        else:
-                            # Fallback: fetch attachments by source_id
-                            attachments = db_service.get_attachments_by_source_id(doc.source_id)
-                            attachment = attachments[0] if attachments else None
-                        
-                        if not attachment:
-                            raise Exception(f"Attachment not found for source_id {doc.source_id}")
-                        
-                        # Process attachment using DocumentProcessor (OCR service)
-                        from app.services.s3_service import S3Service
-                        from app.services.file_service import FileProcessor, DocumentProcessor
-                        
-                        logger.info(f"Processing email attachment: {attachment.filename} for user {doc.user_id}")
-                        
-                        # Download file from S3
-                        s3_service = S3Service()
-                        file_data = await s3_service.download_file_from_s3(attachment.storage_path or attachment.s3_url)
-                        
-                        # Extract text if not already extracted
-                        text_content = attachment.extracted_text
-                        if not text_content and attachment.filename.lower().endswith('.pdf'):
-                            file_processor = FileProcessor(db_service, doc.user_id)
-                            text_content = file_processor.extract_text(file_data)
-                            
-                            # Update attachment with extracted text
-                            if text_content:
-                                db_service.update_attachment_text(attachment.id, text_content)
-                        
-                        # Initialize document processor
-                        document_processor = DocumentProcessor(db_service, doc.user_id)
-                        
-                        # Process document with OCR (will fallback to LLM if OCR fails)
-                        ocr_success, processing_results, processing_method = await document_processor.process_document(
-                            file_data=file_data,
-                            filename=attachment.filename,
-                            source_id=doc.source_id,
-                            document_type=doc.document_type or "INVOICE",
-                            text_content=text_content,
-                            s3_key=attachment.s3_url or attachment.storage_path,
-                            upload_notes=f"Email from {email.from_address}: {email.subject}",
-                            file_hash=attachment.file_hash
-                        )
-                        
-                        # Mark document as completed
-                        db_service.update_staging_status(
-                            staging_id=doc.id,
-                            status="COMPLETED",
-                            metadata={
-                                "processing_method": processing_method,
-                                "ocr_success": ocr_success,
-                                "results_count": len(processing_results),
-                                "attachment_filename": attachment.filename
-                            }
-                        )
-                        
-                        logger.info(f"✅ Successfully processed email attachment {attachment.filename} using {processing_method}")
-                        
+                        # Process email attachment
+                        await self._process_email_attachment(db_service, doc, email)
                     else:
-                        # For email content (no attachment), use HTML or plain text
-                        content = email.html_content or email.plain_text_content
-                        
-                        # Build email content payload - direct LLM processing
-                        processed_emails.append({
-                            "source_id": doc.source_id,
-                            "user_id": doc.user_id,
-                            "from": email.from_address,
-                            "subject": email.subject,
-                            "body": content,
-                            "attachments": [],
-                            "has_attachments": False
-                        })
+                        # Process email HTML/text content
+                        await self._process_email_content(db_service, doc, email)
                     
                 except Exception as doc_error:
-                    logger.error(f"❌ Error preparing document {doc.filename}: {str(doc_error)}")
-                    
-                    # Mark as failed
-                    new_attempts = doc.processing_attempts + 1
-                    status = "FAILED" if new_attempts >= doc.max_attempts else "PENDING"
-                    
-                    db_service.update_staging_status(
-                        staging_id=doc.id,
-                        status=status,
-                        error_message=str(doc_error),
-                        attempts=new_attempts
+                    # Use status manager for error handling
+                    from app.services.document_staging_service import DocumentStagingStatusManager
+                    status_manager = DocumentStagingStatusManager(db_service, logger)
+                    status_manager.update_status_failed(
+                        source_id=doc.source_id,
+                        error=doc_error,
+                        filename=doc.filename
                     )
                     continue
-            
-            # Batch process email content (without attachments) using LLM
-            if processed_emails:
-                logger.info(f"Processing {len(processed_emails)} email contents in batch")
-                
-                # Use the first user_id for LLM service (they should all be the same in a batch)
-                user_id = processed_emails[0]["user_id"]
-                llm_service = LLMService(user_id=user_id, db=db_service)
-                
-                # Run LLM batch processing
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: llm_service.llm_batch_processing(processed_emails)
-                )
-                
-                # Mark all email content documents as completed
-                for doc in email_documents:
-                    if doc.document_processing_status == "IN_PROGRESS" and not doc.meta_data.get("has_attachment", False):
-                        db_service.update_staging_status(
-                            staging_id=doc.id,
-                            status="COMPLETED",
-                            metadata={
-                                "processing_method": "llm_batch",
-                                "batch_size": len(processed_emails)
-                            }
-                        )
-                
-                logger.info(f"✅ Successfully processed {len(processed_emails)} email contents in batch")
                 
         except Exception as e:
             logger.error(f"❌ Error in batch email processing: {str(e)}")
             raise e
 
+    async def _process_email_attachment(self, db_service: DBService, doc, email):
+        """Process email with attachment."""
+        from app.services.s3_service import S3Service
+        from app.services.file_processor_service import FileProcessor
+        from app.services.document_processor_service import DocumentProcessor
+        
+        # Get attachment
+        attachment_id = doc.meta_data.get("attachment_id")
+        if attachment_id:
+            attachment = db_service.get_attachment_by_id(attachment_id)
+        else:
+            attachments = db_service.get_attachments_by_source_id(doc.source_id)
+            attachment = attachments[0] if attachments else None
+        
+        if not attachment:
+            raise Exception(f"Attachment not found for source_id {doc.source_id}")
+        
+        logger.info(f"Processing email attachment: {attachment.filename}")
+        
+        # Download file from S3
+        s3_service = S3Service()
+        file_data = await s3_service.download_file_from_s3(
+            attachment.storage_path or attachment.s3_url
+        )
+        
+        # Extract text if PDF and not already extracted
+        text_content = attachment.extracted_text
+        if not text_content and attachment.filename.lower().endswith('.pdf'):
+            file_processor = FileProcessor(db_service, doc.user_id)
+            text_content = file_processor.extract_text(file_data)
+            
+            if text_content:
+                db_service.update_attachment_text(attachment.id, text_content)
+        
+        # Process document using DocumentProcessor
+        document_processor = DocumentProcessor(db_service, doc.user_id)
+        await document_processor.process_document(
+            source_id=doc.source_id,
+            document_type=doc.document_type or "INVOICE",
+            filename=attachment.filename,
+            file_data=file_data,
+            text_content=text_content,
+            s3_key=attachment.s3_url or attachment.storage_path,
+            upload_notes=f"Email from {email.from_address}: {email.subject}",
+            file_hash=attachment.file_hash
+        )
+
+    async def _process_email_content(self, db_service: DBService, doc, email):
+        """Process email HTML/text content without attachment."""
+        from app.services.document_processor_service import DocumentProcessor
+        
+        logger.info(f"Processing email content from {email.from_address}")
+        
+        # Get HTML or plain text content
+        content = email.html_content or email.plain_text_content
+        
+        # Process using DocumentProcessor with HTML content handler
+        document_processor = DocumentProcessor(db_service, doc.user_id)
+        await document_processor.process_document(
+            source_id=doc.source_id,
+            document_type=doc.document_type or "INVOICE",
+            html_content=content,
+            email_subject=email.subject,
+            email_from=email.from_address,
+            upload_notes=f"Email content from {email.from_address}"
+        )
+
     async def _process_manual_documents(self, db_service: DBService, manual_documents: list):
-        """Process manual upload documents individually using existing logic."""
-        from app.services.file_service import DocumentProcessor
+        """
+        Process manual upload documents individually.
+        All status updates are handled by DocumentProcessor.
+        """
+        from app.services.document_processor_service import DocumentProcessor
         from app.services.s3_service import S3Service
         
         for doc in manual_documents:
             try:
-                # Mark as in progress
-                db_service.update_staging_status(
-                    staging_id=doc.id,
-                    status="IN_PROGRESS"
-                )
-
-                logger.info(f"Processing manual document: {doc.filename} (ID: {doc.id})")
+                logger.info(f"Processing manual document: {doc.filename} (source_id: {doc.source_id})")
 
                 # Download file from S3
                 s3_service = S3Service()
@@ -470,18 +415,17 @@ class DocumentStagingProcessorCron(BaseCronJob):
                 # Extract text if PDF
                 text_content = None
                 if doc.filename.lower().endswith('.pdf'):
-                    from app.services.file_service import FileProcessor
+                    from app.services.file_processor_service import FileProcessor
                     file_processor = FileProcessor(db_service, doc.user_id)
                     text_content = file_processor.extract_text(file_data)
 
-                    # Update attachment with extracted text using source_id
                     if text_content:
                         attachments = db_service.get_attachments_by_source_id(doc.source_id)
                         if attachments:
                             db_service.update_attachment_text(attachments[0].id, text_content)
 
-                # Process document
-                ocr_success, processing_results, processing_method = await document_processor.process_document(
+                # Process document - all status updates handled internally
+                await document_processor.process_document(
                     file_data=file_data,
                     filename=doc.filename,
                     source_id=doc.source_id,
@@ -492,33 +436,7 @@ class DocumentStagingProcessorCron(BaseCronJob):
                     file_hash=doc.file_hash
                 )
 
-                # Mark as completed
-                db_service.update_staging_status(
-                    staging_id=doc.id,
-                    status="COMPLETED",
-                    metadata={
-                        "processing_method": processing_method,
-                        "ocr_success": ocr_success,
-                        "results_count": len(processing_results)
-                    }
-                )
-
-                logger.info(f"✅ Successfully processed {doc.filename} using {processing_method}")
-
             except Exception as doc_error:
-                logger.error(f"❌ Error processing document {doc.filename}: {str(doc_error)}")
-
-                # Increment attempts and mark as failed if max attempts reached
-                new_attempts = doc.processing_attempts + 1
-                status = "FAILED" if new_attempts >= doc.max_attempts else "PENDING"
-
-                db_service.update_staging_status(
-                    staging_id=doc.id,
-                    status=status,
-                    error_message=str(doc_error),
-                    attempts=new_attempts
-                )
-
-                if status == "FAILED":
-                    logger.warning(f"⚠️ Document {doc.filename} marked as FAILED after {new_attempts} attempts")
+                # Errors are handled by DocumentProcessor's status manager
+                logger.error(f"❌ Failed to process manual document {doc.filename}: {str(doc_error)}")
 

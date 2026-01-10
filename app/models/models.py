@@ -49,7 +49,7 @@ class DocumentType(enum.Enum):
     INVOICE = "invoice"
     BILL = "bill"
     EMI = "emi"
-    PAYMENT_RECEIPT = "payment_receipt"
+    RECEIPT = "receipt"
     TAX_INVOICE = "tax_invoice"
     CREDIT_NOTE = "credit_note"
     DEBIT_NOTE = "debit_note"

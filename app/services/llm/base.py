@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 from fastapi import HTTPException
@@ -11,7 +12,7 @@ class BaseLLMProcessor(ABC):
     
     def __init__(self, llm_service):
         self.llm_service = llm_service
-        self.db = llm_service.db
+        self.db = llm_service.db_service
     
     @abstractmethod
     def extract_metadata(self, item: Any, idx: int) -> tuple[str, int, int, str]:
@@ -68,9 +69,10 @@ class BaseLLMProcessor(ABC):
         """
         pass
     
-    def process(self, items: list) -> list[dict]:
+    async def process(self, items: list) -> list[dict]:
         """
         Main processing pipeline for batch processing items.
+        Uses async LLM calls to prevent blocking the event loop.
         
         Args:
             items: List of items to process (emails, documents, etc.)
@@ -106,11 +108,12 @@ class BaseLLMProcessor(ABC):
                 raise HTTPException(status_code=400, detail="No valid content found to process")
 
             try:
-                results = self.llm_service.llm_processing(accumulated_text)
+                # Use async LLM processing to prevent blocking
+                results = await self.llm_service.llm_processing(accumulated_text)
             except Exception as llm_error:
                 raise HTTPException(status_code=500, detail=f"LLM processing failed: {llm_error}")
 
-            # Save the processed data
+            # Save the processed data (sync DB operation - runs quickly)
             self.save_processed_response(results)
             
             # Perform any post-processing

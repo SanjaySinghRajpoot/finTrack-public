@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -21,13 +21,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle, Upload, FileText, AlertCircle } from "lucide-react";
+import { CheckCircle, Upload, FileText, AlertCircle, FolderOpen, File, Info } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { generateFileHash, uploadToS3, validateFile, formatFileSize } from "@/lib/fileUtils";
+import {
+  generateFileHash,
+  uploadToS3,
+  validateFile,
+} from "@/lib/fileUtils";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+/* ---------------------------- Schema ---------------------------- */
+
+// Use a file-like check that doesn't rely on File constructor being available
+const isFileLike = (val: unknown): val is File => {
+  return (
+    val !== null &&
+    typeof val === "object" &&
+    "name" in val &&
+    "size" in val &&
+    "type" in val
+  );
+};
 
 const uploadSchema = z.object({
-  file: z.any().refine((file) => file instanceof File, "Please select a file"),
+  files: z.array(z.custom<File>(isFileLike, "Invalid file")).min(1, "Please select at least one file"),
   document_type: z.string().min(1, "Document type is required"),
   upload_notes: z.string().optional(),
 });
@@ -40,15 +58,31 @@ interface FileUploadModalProps {
 }
 
 interface UploadStage {
-  stage: 'idle' | 'hashing' | 'presigned' | 'uploading' | 'metadata' | 'complete' | 'error';
+  stage:
+    | "idle"
+    | "hashing"
+    | "presigned"
+    | "uploading"
+    | "metadata"
+    | "complete"
+    | "error";
   message: string;
 }
 
+/* ---------------------------- Component ---------------------------- */
+
 export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStage, setUploadStage] = useState<UploadStage>({ stage: 'idle', message: '' });
-  const [isDuplicate, setIsDuplicate] = useState(false);
+  const [uploadStage, setUploadStage] = useState<UploadStage>({
+    stage: "idle",
+    message: "",
+  });
+  const [uploadMode, setUploadMode] = useState<"files" | "folder">("files");
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
   const queryClient = useQueryClient();
 
   const form = useForm<UploadFormValues>({
@@ -59,251 +93,275 @@ export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
     },
   });
 
+  /* ---------------------------- Upload Mutation ---------------------------- */
+
   const uploadMutation = useMutation({
-    mutationFn: async (data: { file: File; document_type: string; upload_notes?: string }) => {
-      const { file, document_type, upload_notes } = data;
+    mutationFn: async (values: UploadFormValues) => {
+      const { files, document_type, upload_notes } = values;
 
-      console.log('🔵 [Upload] Starting file upload process');
-      console.log('📄 File details:', { name: file.name, size: file.size, type: file.type });
+      /* ---------- Stage 1: Hashing ---------- */
+      setUploadStage({ stage: "hashing", message: "Hashing files..." });
+      setUploadProgress(5);
 
-      // Stage 1: Generate file hash
-      setUploadStage({ stage: 'hashing', message: 'Generating file hash...' });
-      setUploadProgress(10);
-      console.log('🔐 [Stage 1] Generating file hash...');
-      const fileHash = await generateFileHash(file);
-      console.log('✅ File hash generated:', fileHash.substring(0, 16) + '...');
-
-      // Stage 2: Request presigned URL
-      setUploadStage({ stage: 'presigned', message: 'Requesting upload URL...' });
-      setUploadProgress(20);
-      console.log('🔑 [Stage 2] Requesting presigned URL from backend...');
-      
-      const presignedResponse = await api.getPresignedUrls({
-        files: [{
-          filename: file.name,
-          content_type: file.type,
-          file_hash: fileHash,
-          file_size: file.size,
-        }],
-      });
-
-      console.log('📨 Presigned URL response:', presignedResponse);
-      const fileData = presignedResponse.data[0];
-      console.log('📋 File data:', { 
-        filename: fileData.filename, 
-        remark: fileData.remark,
-        hasPresignedUrl: !!fileData.presigned_url,
-        s3_key: fileData.s3_key 
-      });
-
-      // Check if file is duplicate
-      if (fileData.remark === 'duplicate') {
-        console.warn('⚠️  Duplicate file detected');
-        setIsDuplicate(true);
-        throw new Error('This file has already been uploaded. Duplicates are not allowed.');
-      }
-
-      if (!fileData.presigned_url || !fileData.s3_key) {
-        console.error('❌ Missing presigned URL or S3 key in response');
-        throw new Error('Failed to get presigned URL from server');
-      }
-
-      console.log('✅ Presigned URL received successfully');
-
-      // Stage 3: Upload to S3
-      setUploadStage({ stage: 'uploading', message: 'Uploading to S3...' });
-      console.log('☁️  [Stage 3] Uploading file to S3...');
-      console.log('🔗 S3 Key:', fileData.s3_key);
-      console.log('📝 Content-Type for upload:', file.type);
-      
-      try {
-        await uploadToS3(
-          fileData.presigned_url,
+      const filesPayload = await Promise.all(
+        files.map(async (file) => ({
           file,
-          file.type,
-          (progress) => {
-            // Map S3 upload progress to 20-80%
-            setUploadProgress(20 + (progress * 0.6));
-          }
-        );
-        console.log('✅ S3 upload completed successfully');
-      } catch (s3Error) {
-        console.error('❌ S3 upload failed:', s3Error);
-        throw s3Error;
-      }
-
-      // Stage 4: Submit metadata to backend
-      setUploadStage({ stage: 'metadata', message: 'Processing file...' });
-      setUploadProgress(85);
-      console.log('📊 [Stage 4] Submitting file metadata to backend...');
-      
-      const metadataResponse = await api.submitFileMetadata({
-        files: [{
           filename: file.name,
-          file_hash: fileHash,
-          s3_key: fileData.s3_key,
-          file_size: file.size,
           content_type: file.type,
-          document_type: document_type,
-          upload_notes: upload_notes,
-        }],
+          file_size: file.size,
+          file_hash: await generateFileHash(file),
+          relative_path: file.webkitRelativePath || file.name,
+        }))
+      );
+
+      /* ---------- Stage 2: Presigned URLs ---------- */
+      setUploadStage({
+        stage: "presigned",
+        message: "Checking duplicates...",
+      });
+      setUploadProgress(15);
+
+      const presignedResponse = await api.getPresignedUrls({
+        files: filesPayload.map((f) => ({
+          filename: f.filename,
+          content_type: f.content_type,
+          file_size: f.file_size,
+          file_hash: f.file_hash,
+          relative_path: f.relative_path,
+        })),
       });
 
-      console.log('✅ Metadata submitted successfully:', metadataResponse);
+      /* ---------- Split uploadable vs duplicate ---------- */
+      const uploadable = presignedResponse.data
+        .map((res, index) => ({
+          presigned: res,
+          original: filesPayload[index],
+        }))
+        .filter(({ presigned }) => presigned.remark === "success");
+
+      const duplicates = presignedResponse.data.filter(
+        (res) => res.remark === "duplicate"
+      );
+
+      if (duplicates.length > 0) {
+        toast.warning(`${duplicates.length} duplicate file(s) skipped`);
+      }
+
+      if (uploadable.length === 0) {
+        throw new Error("All selected files are duplicates.");
+      }
+
+      /* ---------- Stage 3: Upload to S3 ---------- */
+      setUploadStage({ stage: "uploading", message: "Uploading files..." });
+
+      const totalFiles = uploadable.length;
+      let completedFiles = 0;
+
+      await Promise.all(
+        uploadable.map(async ({ presigned, original }) => {
+          await uploadToS3(
+            presigned.presigned_url!,
+            original.file,
+            original.content_type,
+            (progress) => {
+              const base = 20;
+              const perFile = 60 / totalFiles;
+              setUploadProgress(
+                base + completedFiles * perFile + progress * perFile
+              );
+            }
+          );
+
+          completedFiles += 1;
+        })
+      );
+
+      /* ---------- Stage 4: Metadata ---------- */
+      setUploadStage({ stage: "metadata", message: "Processing files..." });
+      setUploadProgress(90);
+
+      const metadataResponse = await api.submitFileMetadata({
+        files: uploadable.map(({ presigned, original }) => ({
+          filename: original.filename,
+          file_hash: original.file_hash,
+          s3_key: presigned.s3_key!,
+          file_size: original.file_size,
+          content_type: original.content_type,
+          document_type,
+          upload_notes,
+          relative_path: original.relative_path,
+        })),
+      });
+
       setUploadProgress(100);
       return metadataResponse;
     },
-    onSuccess: (data) => {
-      console.log('🎉 Upload process completed successfully!');
-      setUploadStage({ stage: 'complete', message: 'Upload complete!' });
+
+    onSuccess: () => {
+      setUploadStage({ stage: "complete", message: "Upload complete!" });
       queryClient.invalidateQueries({ queryKey: ["importedExpenses"] });
-      
-      const fileStatus = data.data[0]?.status;
-      console.log('📌 File status:', fileStatus);
-      
-      if (fileStatus === 'queued_for_processing') {
-        toast.success("File uploaded successfully! Processing will begin shortly.");
-      } else if (fileStatus === 'existing') {
-        toast.info("File already exists in the system.");
-      } else {
-        toast.success("File uploaded and queued for processing!");
-      }
-      
-      // Auto-close after 2 seconds
-      setTimeout(() => {
-        handleClose();
-      }, 2000);
+
+      toast.success("Files uploaded successfully and queued for processing.");
+
+      setTimeout(handleClose, 2000);
     },
+
     onError: (error: Error) => {
-      console.error('❌ Upload error:', error);
-      console.error('Error stack:', error.stack);
-      setUploadStage({ stage: 'error', message: error.message });
-      
-      if (isDuplicate) {
-        toast.error(error.message);
-      } else {
-        toast.error(error.message || "Failed to upload file");
-      }
-      
+      setUploadStage({ stage: "error", message: error.message });
       setUploadProgress(0);
-      setIsDuplicate(false);
+      toast.error(error.message || "Upload failed");
     },
   });
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] || null;
-    setSelectedFile(file);
-    setIsDuplicate(false);
-    
-    if (file) {
+  /* ---------------------------- Handlers ---------------------------- */
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    for (const file of files) {
       const validation = validateFile(file);
-      
       if (!validation.valid) {
-        toast.error(validation.error);
-        setSelectedFile(null);
-        event.target.value = '';
+        toast.error(`${file.name}: ${validation.error}`);
         return;
       }
-      
-      form.setValue("file", file);
-    }
-  };
-
-  const handleSubmit = (values: UploadFormValues) => {
-    if (!selectedFile) {
-      toast.error("Please select a file");
-      return;
     }
 
-    setUploadProgress(5);
-    uploadMutation.mutate({
-      file: selectedFile,
-      document_type: values.document_type,
-      upload_notes: values.upload_notes || undefined,
-    });
+    setSelectedFiles(files);
+    form.setValue("files", files);
   };
 
   const handleClose = () => {
-    if (uploadMutation.isPending) return; // Prevent closing during upload
-    
-    // Reset form and state
+    if (uploadMutation.isPending) return;
     form.reset();
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setUploadProgress(0);
-    setUploadStage({ stage: 'idle', message: '' });
-    setIsDuplicate(false);
+    setUploadStage({ stage: "idle", message: "" });
+    setUploadMode("files");
     onClose();
   };
+
+  /* ---------------------------- UI ---------------------------- */
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="text-xl flex items-center gap-2">
-            <FileText className="h-5 w-5 text-primary" />
-            Upload Invoice
+            <Upload className="h-5 w-5 text-primary" />
+            Upload Documents
           </DialogTitle>
         </DialogHeader>
 
-        {uploadStage.stage === 'complete' ? (
+        {uploadStage.stage === "complete" ? (
           <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
-              <CheckCircle className="h-8 w-8 text-green-600" />
-            </div>
-            <h3 className="text-lg font-semibold text-foreground mb-2">Upload Successful!</h3>
-            <p className="text-sm text-muted-foreground">
-              Your file has been uploaded and queued for processing.
-            </p>
+            <CheckCircle className="h-10 w-10 text-green-600 mx-auto mb-4" />
+            <p className="font-medium">Upload successful!</p>
           </div>
         ) : (
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-            {/* File Upload */}
+          <form
+            onSubmit={form.handleSubmit((v) => uploadMutation.mutate(v))}
+            className="space-y-4"
+          >
+            {/* Info Alert */}
+            <Alert className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900">
+              <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <AlertDescription className="text-sm text-blue-800 dark:text-blue-300">
+                Once processed, files appear in the <strong>Files</strong> page for tracking. Extracted data shows in the <strong>Imported</strong> section of All Transactions where you can verify and import to your expenses.
+              </AlertDescription>
+            </Alert>
+
+            {/* Upload Mode Toggle */}
+            <div className="space-y-3">
+              <Label>Upload Type</Label>
+              <div className="flex items-center gap-2 bg-muted p-1 rounded-lg">
+                <Button
+                  type="button"
+                  variant={uploadMode === "files" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setUploadMode("files");
+                    setSelectedFiles([]);
+                    form.setValue("files", []);
+                  }}
+                  disabled={uploadMutation.isPending}
+                  className="flex-1 h-9"
+                >
+                  <File className="h-4 w-4 mr-2" />
+                  Files
+                </Button>
+                <Button
+                  type="button"
+                  variant={uploadMode === "folder" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setUploadMode("folder");
+                    setSelectedFiles([]);
+                    form.setValue("files", []);
+                  }}
+                  disabled={uploadMutation.isPending}
+                  className="flex-1 h-9"
+                >
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Folder
+                </Button>
+              </div>
+            </div>
+
+            {/* File Picker */}
             <div className="space-y-2">
-              <Label htmlFor="file">PDF or Image File</Label>
-              <div className="flex items-center gap-2">
+              <Label>{uploadMode === "files" ? "Select Files" : "Select Folder"}</Label>
+              
+              {/* File Input (for individual files) */}
+              {uploadMode === "files" && (
                 <Input
-                  id="file"
+                  ref={fileInputRef}
                   type="file"
+                  multiple
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
                   onChange={handleFileChange}
                   disabled={uploadMutation.isPending}
-                  className="flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={uploadMutation.isPending}
-                  onClick={() => document.getElementById('file')?.click()}
-                >
-                  <Upload className="h-4 w-4" />
-                </Button>
-              </div>
-              {selectedFile && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <FileText className="h-4 w-4" />
-                  <span>{selectedFile.name}</span>
-                  <span>({formatFileSize(selectedFile.size)})</span>
-                </div>
               )}
-              {form.formState.errors.file && (
+              
+              {/* Folder Input */}
+              {uploadMode === "folder" && (
+                <Input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  // @ts-ignore - webkitdirectory is not in the types but works in browsers
+                  webkitdirectory=""
+                  directory=""
+                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  onChange={handleFileChange}
+                  disabled={uploadMutation.isPending}
+                />
+              )}
+
+              {selectedFiles.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {selectedFiles.length} file{selectedFiles.length !== 1 ? 's' : ''} selected
+                </p>
+              )}
+
+              {form.formState.errors.files && (
                 <p className="text-sm text-red-500 flex items-center gap-1">
                   <AlertCircle className="h-4 w-4" />
-                  {form.formState.errors.file.message}
+                  {form.formState.errors.files.message}
                 </p>
               )}
             </div>
 
             {/* Document Type */}
             <div className="space-y-2">
-              <Label htmlFor="document_type">Document Type</Label>
+              <Label>Document Type</Label>
               <Select
                 value={form.watch("document_type")}
-                onValueChange={(value) => form.setValue("document_type", value)}
-                disabled={uploadMutation.isPending}
+                onValueChange={(v) => form.setValue("document_type", v)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select document type" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="INVOICE">Invoice</SelectItem>
@@ -314,31 +372,25 @@ export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
               </Select>
             </div>
 
-            {/* Upload Notes */}
-            <div className="space-y-2">
-              <Label htmlFor="upload_notes">Notes (Optional)</Label>
-              <Textarea
-                id="upload_notes"
-                placeholder="Add any notes about this document..."
-                className="resize-none"
-                disabled={uploadMutation.isPending}
-                {...form.register("upload_notes")}
-              />
-            </div>
+            {/* Notes */}
+            <Textarea
+              placeholder="Notes (optional)"
+              {...form.register("upload_notes")}
+            />
 
-            {/* Upload Progress */}
+            {/* Progress */}
             {uploadMutation.isPending && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex justify-between text-sm">
                   <span>{uploadStage.message}</span>
                   <span>{Math.round(uploadProgress)}%</span>
                 </div>
-                <Progress value={uploadProgress} className="w-full" />
+                <Progress value={uploadProgress} />
               </div>
             )}
 
-            {/* Buttons */}
-            <div className="flex gap-3 pt-4">
+            {/* Actions */}
+            <div className="flex gap-3 pt-2">
               <Button
                 type="button"
                 variant="outline"
@@ -350,20 +402,11 @@ export function FileUploadModal({ isOpen, onClose }: FileUploadModalProps) {
               </Button>
               <Button
                 type="submit"
-                disabled={!selectedFile || uploadMutation.isPending}
-                className="flex-1 bg-primary hover:bg-primary/90"
+                disabled={!selectedFiles.length || uploadMutation.isPending}
+                className="flex-1"
               >
-                {uploadMutation.isPending ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    {uploadStage.message.split('...')[0]}...
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <Upload className="h-4 w-4" />
-                    Upload & Process
-                  </div>
-                )}
+                <Upload className="h-4 w-4 mr-2" />
+                Upload & Process
               </Button>
             </div>
           </form>

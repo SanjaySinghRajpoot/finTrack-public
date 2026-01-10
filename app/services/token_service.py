@@ -21,7 +21,8 @@ from app.utils.exceptions import (
 
 
 # Use centralized config for encryption
-ENCRYPTION_KEY = settings.ENCRYPTION_KEY.encode() if isinstance(settings.ENCRYPTION_KEY, str) else settings.ENCRYPTION_KEY
+# ENCRYPTION_KEY = settings.ENCRYPTION_KEY.encode() if isinstance(settings.ENCRYPTION_KEY, str) else settings.ENCRYPTION_KEY
+ENCRYPTION_KEY = "X1Tz1y9Ff0QZxQ9fDd0tKXk8h1u4z6pF8H2xG4XK9sY="
 fernet = Fernet(ENCRYPTION_KEY)
 
 # Use centralized config for Google OAuth
@@ -116,11 +117,9 @@ class TokenService:
 
     async def get_token(self, user_id: int, provider: str = "gmail") -> str | None:
         """Get decrypted access token for a user's integration."""
-        integration_status = (
-            self.db.query(IntegrationStatus)
-            .filter_by(user_id=user_id, integration_type=provider)
-            .first()
-        )
+        # Use IntegrationService helper method
+        integration_service = IntegrationService(self.db)
+        integration_status = integration_service._get_user_integration_by_type(user_id, provider)
 
         if not integration_status:
             return None
@@ -148,12 +147,10 @@ class TokenService:
         Refresh a user's Google access token using the stored refresh token.
         """
         try:
-            # Find the user's integration and related email config
-            integration_status = (
-                self.db.query(IntegrationStatus)
-                .filter_by(user_id=user_id, integration_type=provider)
-                .first()
-            )
+            # Use IntegrationService helper method
+            integration_service = IntegrationService(self.db)
+            integration_status = integration_service._get_user_integration_by_type(user_id, provider)
+            
             if not integration_status:
                 raise NotFoundError("Integration", f"user_id:{user_id}, provider:{provider}")
 

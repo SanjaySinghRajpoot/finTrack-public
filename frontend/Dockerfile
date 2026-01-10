@@ -9,6 +9,10 @@ RUN npm install
 
 COPY . .
 
+# Accept VITE_API_BASE_URL as a build argument (Vite needs it at build time, not runtime)
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 RUN npm run build
 
 # Production stage - serve with a lightweight static server

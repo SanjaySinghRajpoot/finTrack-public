@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Home, Receipt, Settings, User, LogOut, Menu, Sparkles, FolderOpen, Loader2 } from "lucide-react";
+import { Home, Receipt, Settings, User, LogOut, Menu, Sparkles, FolderOpen, Loader2, HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ const navItems = [
   { title: "Transactions", icon: Receipt, path: "/transactions" },
   { title: "Files", icon: FolderOpen, path: "/files" },
   { title: "Profile", icon: User, path: "/profile" },
+  { title: "Support", icon: HelpCircle, path: "/support" },
   { title: "Settings", icon: Settings, path: "/settings" },
 ];
 
@@ -74,7 +75,10 @@ export const Sidebar = ({ collapsed, onToggle }: SidebarProps) => {
           collapsed ? "-translate-x-full md:translate-x-0 md:w-20" : "translate-x-0 w-64"
         )}
       >
-        <div className="h-16 flex items-center justify-center border-b border-border px-4">
+        <div className={cn(
+          "h-16 flex items-center border-b border-border",
+          collapsed ? "justify-center px-4" : "px-4"
+        )}>
           {!collapsed && (
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-md">

@@ -50,8 +50,10 @@ class ManualDocumentProcessor(BaseLLMProcessor):
                     self.db.save_processed_items(data_obj.id, items_data)
                     
         except Exception as e:
-            print(f"Error saving manual upload response: {e}")
-            raise e
+            error_msg = f"Error saving manual upload response: {e}"
+            print(error_msg)
+            # Re-raise the exception to fail the file processing
+            raise Exception(error_msg)
     
     def post_processing(self, results: list[dict]) -> list[dict]:
         """No additional post-processing needed for manual uploads."""

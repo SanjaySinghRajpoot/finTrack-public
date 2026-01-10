@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
-import { Plus, Upload, Camera, Pencil, Trash2, ChevronLeft, ChevronRight, Search, Filter, FileText, Download, Receipt, Settings2, FileDown } from "lucide-react";
+import { Plus, Upload, Camera, Pencil, Trash2, ChevronLeft, ChevronRight, Search, Filter, FileText, Download, Receipt, Settings2, FileDown, Info } from "lucide-react";
 import { toast } from "sonner";
-import { api, Expense, CreateExpenseRequest, ImportedExpense } from "@/lib/api";
+import { api, Expense, CreateExpenseRequest, ImportedExpense, PaginatedResponse } from "@/lib/api";
 import { getCategoryConfig } from "@/lib/categories";
 import { format } from "date-fns";
 import {
@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAnalytics, EVENTS } from "@/lib/analytics";
 
 // Lazy load heavy modal components to reduce initial bundle
 const ExpenseForm = lazy(() => import("@/components/ExpenseForm").then(m => ({ default: m.ExpenseForm })));
@@ -37,6 +38,7 @@ const ModalLoader = () => (
 const ITEMS_PER_PAGE = 10;
 
 const Transactions = () => {
+  const { trackEvent } = useAnalytics();
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -65,17 +67,38 @@ const Transactions = () => {
     retry: false,
   });
 
-  const { data: expenses = [], isLoading } = useQuery({
-    queryKey: ["expenses"],
-    queryFn: api.getExpenses,
+  // Fetch expenses with pagination
+  const { data: expensesData, isLoading: isLoadingExpenses } = useQuery<PaginatedResponse<Expense>>({
+    queryKey: ["expenses", currentPage, viewType],
+    queryFn: async () => {
+      const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+      return api.getExpenses(ITEMS_PER_PAGE, offset);
+    },
     retry: false,
+    enabled: viewType === "expenses",
+    placeholderData: (previousData) => previousData,
   });
 
-  const { data: importedExpenses = [] } = useQuery({
-    queryKey: ["importedExpenses"],
-    queryFn: api.getImportedExpenses,
+  // Fetch imported expenses with pagination
+  const { data: importedExpensesData, isLoading: isLoadingImported } = useQuery<PaginatedResponse<ImportedExpense>>({
+    queryKey: ["importedExpenses", currentPage, viewType],
+    queryFn: async () => {
+      const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+      return api.getImportedExpenses(ITEMS_PER_PAGE, offset);
+    },
     retry: false,
+    enabled: viewType === "imported",
+    placeholderData: (previousData) => previousData,
   });
+
+  const expenses = expensesData?.data || [];
+  const importedExpenses = importedExpensesData?.data || [];
+  const isLoading = viewType === "expenses" ? isLoadingExpenses : isLoadingImported;
+
+  // Get total count from pagination data
+  const totalCount = viewType === "expenses" 
+    ? (expensesData?.pagination.total || 0)
+    : (importedExpensesData?.pagination.total || 0);
 
   // Get custom fields sorted by order
   const customFields = useMemo(() => {
@@ -204,7 +227,7 @@ const Transactions = () => {
     });
   };
 
-  // Filter and pagination logic
+  // Filter logic - now done client-side on the current page data
   const filteredData = useMemo(() => {
     if (viewType === "expenses") {
       let filtered = [...expenses];
@@ -259,12 +282,11 @@ const Transactions = () => {
     return Array.from(cats).sort();
   }, [viewType, expenses, importedExpenses]);
 
-  // Pagination
-  const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-  const paginatedData = filteredData.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
+  // Calculate total pages based on total count from server
+  const totalPages = totalCount > 0 ? Math.ceil(totalCount / ITEMS_PER_PAGE) : 1;
+  
+  // Use filtered data directly (no client-side pagination slice needed)
+  const paginatedData = filteredData;
 
   // Reset to page 1 when filters change
   useMemo(() => {
@@ -332,25 +354,60 @@ const Transactions = () => {
         <CardHeader className="pb-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             {/* View Type Toggle */}
-            <div className="flex items-center gap-2 bg-muted p-1 rounded-lg w-fit">
-              <Button
-                variant={viewType === "expenses" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewType("expenses")}
-                className="h-9"
-              >
-                <Receipt className="h-4 w-4 mr-2" />
-                My Expenses ({expenses.length})
-              </Button>
-              <Button
-                variant={viewType === "imported" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewType("imported")}
-                className="h-9"
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                Imported ({importedExpenses.length})
-              </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 bg-muted p-1 rounded-lg w-fit">
+                <Button
+                  variant={viewType === "expenses" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    trackEvent(EVENTS.NAVIGATION, {
+                      view_type: 'expenses',
+                      source: 'transactions_page',
+                      previous_view: viewType,
+                    });
+                    setViewType("expenses");
+                  }}
+                  className="h-9"
+                >
+                  <Receipt className="h-4 w-4 mr-2" />
+                  My Expenses ({expenses.length})
+                </Button>
+                <Button
+                  variant={viewType === "imported" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    trackEvent('imported_section_clicked', {
+                      view_type: 'imported',
+                      source: 'transactions_page',
+                      previous_view: viewType,
+                      imported_count: importedExpenses.length,
+                    });
+                    setViewType("imported");
+                  }}
+                  className="h-9"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Imported ({importedExpenses.length})
+                </Button>
+              </div>
+              
+              {/* Info Tooltip */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="h-5 w-5 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center cursor-help">
+                    <Info className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="text-sm">
+                    {viewType === "imported" ? (
+                      <span><strong>Imported:</strong> View processed invoices and verify information before adding them to your expenses using the Import button.</span>
+                    ) : (
+                      <span><strong>My Expenses:</strong> Your confirmed expense records. Edit or delete entries as needed.</span>
+                    )}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             {/* Filters */}
@@ -360,11 +417,28 @@ const Transactions = () => {
                 <Input
                   placeholder="Search transactions..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (e.target.value) {
+                      trackEvent(EVENTS.SEARCH_PERFORMED, {
+                        search_query: e.target.value,
+                        view_type: viewType,
+                        source: 'transactions_page',
+                      });
+                    }
+                  }}
                   className="pl-9"
                 />
               </div>
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <Select value={categoryFilter} onValueChange={(value) => {
+                trackEvent(EVENTS.FILTER_APPLIED, {
+                  filter_type: 'category',
+                  filter_value: value,
+                  view_type: viewType,
+                  source: 'transactions_page',
+                });
+                setCategoryFilter(value);
+              }}>
                 <SelectTrigger className="w-full sm:w-[180px]">
                   <Filter className="h-4 w-4 mr-2" />
                   <SelectValue placeholder="Category" />
@@ -383,7 +457,14 @@ const Transactions = () => {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setIsSchemaModalOpen(true)}
+                    onClick={() => {
+                      trackEvent('schema_button_clicked', {
+                        source: 'transactions_page',
+                        view_type: viewType,
+                        has_custom_fields: customFields.length > 0,
+                      });
+                      setIsSchemaModalOpen(true);
+                    }}
                     className="h-9"
                   >
                     <Settings2 className="h-4 w-4 mr-2" />
@@ -401,7 +482,15 @@ const Transactions = () => {
                   <Button 
                     variant="outline"
                     size="sm"
-                    onClick={() => setIsExportModalOpen(true)}
+                    onClick={() => {
+                      trackEvent('export_button_clicked', {
+                        source: 'transactions_page',
+                        view_type: viewType,
+                        record_count: filteredData.length,
+                        has_filters: searchQuery !== '' || categoryFilter !== 'all',
+                      });
+                      setIsExportModalOpen(true);
+                    }}
                     className="h-9"
                   >
                     <FileDown className="h-4 w-4 mr-2" />
@@ -459,6 +548,7 @@ const Transactions = () => {
                           {field.label}
                         </TableHead>
                       ))}
+                      <TableHead className="w-[130px] text-right font-semibold text-foreground">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

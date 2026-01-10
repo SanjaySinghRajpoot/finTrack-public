@@ -92,11 +92,10 @@ class BaseIntegrationService(ABC):
             )
     
     def _get_integration_status(self, user_id: int) -> Optional[IntegrationStatus]:
-        return (
-            self.db.query(IntegrationStatus)
-            .filter_by(user_id=user_id, integration_type=self.integration_slug)
-            .first()
-        )
+        """Get integration status for a user."""
+        from app.services.integration import IntegrationService
+        integration_service = IntegrationService(self.db)
+        return integration_service._get_user_integration_by_type(user_id, self.integration_slug)
     
     @abstractmethod
     def _cleanup_integration_data(self, integration_status: IntegrationStatus) -> None:

@@ -412,6 +412,16 @@ export interface FullSchemaResponse {
   has_custom_schema: boolean;
 }
 
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  };
+}
+
 export const api = {
   // Auth
   login: async () => {
@@ -429,14 +439,32 @@ export const api = {
   },
 
   // Expenses
-  getExpenses: async (): Promise<Expense[]> => {
-    const response = await fetch(`${API_BASE_URL}/expense`, {
+  getExpenses: async (limit: number = 10, offset: number = 0): Promise<PaginatedResponse<Expense>> => {
+    // Ensure parameters are integers
+    const intLimit = Math.floor(Number(limit));
+    const intOffset = Math.floor(Number(offset));
+    
+    const params = new URLSearchParams({
+      limit: String(intLimit),
+      offset: String(intOffset),
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/expense?${params.toString()}`, {
       headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error('Failed to fetch expenses');
     const result = await response.json();
 
-    return result.data
+    // Transform backend response to match our pagination format
+    return {
+      data: result.data || [],
+      pagination: {
+        total: result.pagination?.total || result.total || result.data?.length || 0,
+        limit: intLimit,
+        offset: intOffset,
+        has_more: result.pagination?.has_more || result.has_more || false,
+      }
+    };
   },
 
   getExpense: async (id: string): Promise<Expense> => {
@@ -476,14 +504,32 @@ export const api = {
   },
 
   // Imported Expenses
-  getImportedExpenses: async (): Promise<ImportedExpense[]> => {
-    const response = await fetch(`${API_BASE_URL}/processed-expense/info`, {
+  getImportedExpenses: async (limit: number = 10, offset: number = 0): Promise<PaginatedResponse<ImportedExpense>> => {
+    // Ensure parameters are integers
+    const intLimit = Math.floor(Number(limit));
+    const intOffset = Math.floor(Number(offset));
+    
+    const params = new URLSearchParams({
+      limit: String(intLimit),
+      offset: String(intOffset),
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/processed-expense/info?${params.toString()}`, {
       headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error('Failed to fetch imported expenses');
     const result = await response.json();
 
-    return result.data
+    // Transform backend response to match our pagination format
+    return {
+      data: result.data || [],
+      pagination: {
+        total: result.pagination?.total || result.total || result.data?.length || 0,
+        limit: intLimit,
+        offset: intOffset,
+        has_more: result.pagination?.has_more || result.has_more || false,
+      }
+    };
   },
 
   // User

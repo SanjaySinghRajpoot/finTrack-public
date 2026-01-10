@@ -25,59 +25,34 @@ export async function uploadToS3(
   onProgress?: (progress: number) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log('🔵 [S3 Upload] Starting upload to S3');
-    console.log('📄 File:', file.name, 'Size:', file.size, 'Type:', file.type);
-    console.log('🔑 Content-Type:', contentType);
-    console.log('🔗 Presigned URL (first 100 chars):', presignedUrl.substring(0, 100) + '...');
-    
     const xhr = new XMLHttpRequest();
 
     // Progress tracking
     xhr.upload.addEventListener("progress", (e) => {
       if (e.lengthComputable && onProgress) {
         const percent = (e.loaded / e.total) * 100;
-        console.log(`📊 Upload progress: ${percent.toFixed(2)}%`);
         onProgress(percent);
       }
     });
 
     xhr.addEventListener("load", () => {
-      console.log(`📡 S3 Response - Status: ${xhr.status}, StatusText: ${xhr.statusText}`);
-      console.log('📋 Response Headers:', xhr.getAllResponseHeaders());
-      
       if (xhr.status >= 200 && xhr.status < 300) {
-        console.log('✅ S3 upload successful!');
         resolve();
       } else {
-        console.error('❌ S3 upload failed with status:', xhr.status);
-        console.error('Response text:', xhr.responseText);
         reject(new Error(`S3 upload failed with status ${xhr.status}: ${xhr.statusText}`));
       }
     });
 
-    xhr.addEventListener("error", (e) => {
-      console.error('❌ XHR error event:', e);
-      console.error('XHR status:', xhr.status);
-      console.error('XHR response:', xhr.responseText);
+    xhr.addEventListener("error", () => {
       reject(new Error("S3 upload failed - Network error"));
     });
     
     xhr.addEventListener("abort", () => {
-      console.warn('⚠️  S3 upload aborted');
       reject(new Error("S3 upload aborted"));
     });
 
-    console.log('🚀 Opening PUT request to S3...');
     xhr.open("PUT", presignedUrl);
-
-    // IMPORTANT: This must match backend signed ContentType
-    console.log('📝 Setting Content-Type header:', contentType);
     xhr.setRequestHeader("Content-Type", contentType);
-
-    // ❌ REMOVE ACL (it breaks the signature)
-    // xhr.setRequestHeader('x-amz-acl', 'private');
-
-    console.log('📤 Sending file to S3...');
     xhr.send(file);
   });
 }

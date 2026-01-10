@@ -3,12 +3,13 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, useLocation } from "react-router-dom";
 import { Provider } from "react-redux";
 import { store } from "./store";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { api, getJwtCookie } from "./lib/api";
+import { useAnalytics } from "./lib/analytics";
 
 // Lazy load all pages for code splitting - reduces initial bundle size
 const DashboardAnalytics = lazy(() => import("./pages/DashboardAnalytics"));
@@ -16,6 +17,7 @@ const Transactions = lazy(() => import("./pages/Transactions"));
 const Files = lazy(() => import("./pages/Files"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Profile = lazy(() => import("./pages/Profile"));
+const Support = lazy(() => import("./pages/Support"));
 const Auth = lazy(() => import("./pages/Auth"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -42,11 +44,11 @@ const prefetchCriticalData = () => {
     });
     queryClient.prefetchQuery({
       queryKey: ["expenses"],
-      queryFn: api.getExpenses,
+      queryFn: () => api.getExpenses(100, 0), // Fetch first 100 expenses
     });
     queryClient.prefetchQuery({
       queryKey: ["importedExpenses"],
-      queryFn: api.getImportedExpenses,
+      queryFn: () => api.getImportedExpenses(100, 0), // Fetch first 100 imported expenses
     });
   }
 };
@@ -79,6 +81,25 @@ const LayoutWithSuspense = () => (
   </ProtectedRoute>
 );
 
+// Page view tracker component
+const PageViewTracker = () => {
+  const location = useLocation();
+  const { trackPageView } = useAnalytics();
+
+  useEffect(() => {
+    const pageName = location.pathname === '/' ? 'Dashboard' : 
+      location.pathname.split('/')[1]?.charAt(0).toUpperCase() + 
+      location.pathname.split('/')[1]?.slice(1) || 'Unknown';
+    
+    trackPageView(pageName, {
+      path: location.pathname,
+      search: location.search,
+    });
+  }, [location, trackPageView]);
+
+  return null;
+};
+
 const App = () => (
   <Provider store={store}>
     <QueryClientProvider client={queryClient}>
@@ -86,6 +107,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
+          <PageViewTracker />
           <Routes>
             {/* Auth routes with full page loader */}
             <Route path="/auth" element={<Suspense fallback={<PageLoader />}><Auth /></Suspense>} />
@@ -98,6 +120,7 @@ const App = () => (
               <Route path="/files" element={<Files />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/support" element={<Support />} />
             </Route>
             
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

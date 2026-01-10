@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sparkles, TrendingUp, PieChart, Shield } from "lucide-react";
 import { api, getJwtCookie } from "@/lib/api";
+import { useAnalytics, EVENTS } from "@/lib/analytics";
 
 const Auth = () => {
   const navigate = useNavigate();
+  const { trackEvent } = useAnalytics();
 
   useEffect(() => {
     // Check if user is already authenticated
@@ -14,7 +16,7 @@ const Auth = () => {
       const jwt = getJwtCookie();
       if (jwt) {
         try {
-          await api.getExpenses();
+          await api.getExpenses(10, 0); // Check auth with pagination params
           navigate("/");
         } catch (error) {
           // JWT invalid, stay on auth page
@@ -25,6 +27,10 @@ const Auth = () => {
   }, [navigate]);
 
   const handleGoogleLogin = () => {
+    trackEvent(EVENTS.LOGIN_INITIATED, {
+      method: 'google',
+      source: 'auth_page',
+    });
     api.login(); // redirects to Google → backend → frontend /
   };
 
